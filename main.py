@@ -138,7 +138,7 @@ print("Klaar!")
 speler = FirstPersonController()
 # Zet de speler in het midden bovenop de wereld
 midden = WERELD_GROOTTE // 2
-speler.position = (midden, hoogte_op(midden, midden) + 5, midden)
+speler.position = (midden, hoogte_op(midden, midden) + 2, midden)
 
 # --- Lucht ---
 Sky()
