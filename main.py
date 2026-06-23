@@ -124,6 +124,10 @@ def plaats_boom(x, grond_hoogte, z):
                         Blok(positie=(x + bx, top + by, z + bz), blok_type='blad')
 
 
+SPAWN_X = WERELD_GROOTTE // 2
+SPAWN_Z = WERELD_GROOTTE // 2
+
+
 def maak_wereld():
     """Maakt de hele 3D wereld: bergen, grotten en bomen."""
     for x in range(WERELD_GROOTTE):
@@ -140,8 +144,9 @@ def maak_wereld():
                     continue  # Hier is een grot, geen blok plaatsen
                 Blok(positie=(x, y, z), blok_type=bepaal_blok_type(y, grond_hoogte))
 
-            # Kleine kans op een boom (alleen op gras, niet op steile hellingen)
-            if blok_type == 'gras' and random.random() < 0.05:
+            # Kleine kans op een boom (alleen op gras, niet te steil, niet op de startplek)
+            is_startplek = (x == SPAWN_X and z == SPAWN_Z)
+            if not is_startplek and blok_type == 'gras' and random.random() < 0.05:
                 hoogte_links  = hoogte_op(max(0, x - 1), z)
                 hoogte_rechts = hoogte_op(min(WERELD_GROOTTE - 1, x + 1), z)
                 if abs(grond_hoogte - hoogte_links) <= 1 and abs(grond_hoogte - hoogte_rechts) <= 1:
@@ -155,10 +160,10 @@ print("Klaar!")
 
 # --- Zet de speler bovenop de grond in het midden ---
 speler = FirstPersonController()
-midden = WERELD_GROOTTE // 2
-grond = hoogte_op(midden, midden)
-# Startpositie: midden van de wereld, 2 blokken boven de grond
-speler.position = Vec3(midden, grond + 2, midden)
+grond = hoogte_op(SPAWN_X, SPAWN_Z)
+# Spawn EXACT op het grondblok — de FirstPersonController detecteert grond
+# pas als afstand <= height+0.1 (dus max 0.1 boven het blok)
+speler.position = (SPAWN_X, grond, SPAWN_Z)
 
 # --- Lucht ---
 Sky()
