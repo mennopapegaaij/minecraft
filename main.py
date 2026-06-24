@@ -21,13 +21,13 @@ ruis_klein  = PerlinNoise(octaves=12, seed=WERELD_ZAAD + 2)
 
 # --- Kleuren van de blokken ---
 KLEUREN = {
-    'gras':   color.rgb(106, 170, 60),
-    'aarde':  color.rgb(134, 96, 67),
-    'steen':  color.rgb(128, 128, 128),
-    'hout':   color.rgb(101, 67, 33),
-    'blad':   color.rgb(34, 120, 34),
-    'zand':   color.rgb(210, 190, 140),
-    'sneeuw': color.rgb(230, 230, 250),
+    'gras':   color.rgb(106/255, 170/255,  60/255),
+    'aarde':  color.rgb(134/255,  96/255,  67/255),
+    'steen':  color.rgb(128/255, 128/255, 128/255),
+    'hout':   color.rgb(101/255,  67/255,  33/255),
+    'blad':   color.rgb( 34/255, 120/255,  34/255),
+    'zand':   color.rgb(210/255, 190/255, 140/255),
+    'sneeuw': color.rgb(230/255, 230/255, 250/255),
 }
 
 # Lijst van alle blokken in de wereld
