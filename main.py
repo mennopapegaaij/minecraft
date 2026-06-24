@@ -57,8 +57,9 @@ class Blok(Button):
     def input(self, toets):
         if self.hovered:
             if toets == 'left mouse down':
-                # Blok afbreken
-                blokken.remove(self)
+                # Blok afbreken (check eerst of het blok nog in de lijst staat)
+                if self in blokken:
+                    blokken.remove(self)
                 destroy(self)
             if toets == 'right mouse down':
                 # Blok plaatsen naast dit blok
