@@ -8,10 +8,11 @@ import collections
 app = Ursina()
 
 # --- Instellingen ---
-CHUNK_GROOTTE  = 8    # Een stukje wereld is 8x8 blokken groot
-RENDER_AFSTAND = 2    # Hoeveel stukjes rondom de speler worden geladen (2 = 5x5 stukjes)
-WERELD_DIEPTE  = 4    # Hoe diep de grond gaat
-BLOKKEN_FRAME  = 40   # Blokken per frame aanmaken (hogere waarde = sneller maar meer haperingen)
+CHUNK_GROOTTE    = 8    # Een stukje wereld is 8x8 blokken groot
+RENDER_AFSTAND   = 2    # Hoeveel stukjes rondom de speler worden geladen (2 = 5x5 stukjes)
+WERELD_DIEPTE    = 4    # Hoe diep de grond gaat
+BLOKKEN_FRAME    = 20   # Blokken per frame aanmaken
+VERWIJDER_FRAME  = 20   # Blokken per frame verwijderen
 
 # Willekeurig zaad: elke keer een andere wereld!
 WERELD_ZAAD = random.randint(1, 9999)
@@ -37,9 +38,10 @@ KLEUREN = {
 huidig_blok = 'gras'
 
 # Bijhouden welke stukjes wereld geladen zijn
-geladen_chunks  = {}                    # (cx, cz) -> verzameling van blokken
-laad_wachtrij   = collections.deque()   # Blokken die nog aangemaakt moeten worden
-vorige_chunk    = None                  # Was de speler in dit chunk in de vorige frame?
+geladen_chunks     = {}                    # (cx, cz) -> verzameling van blokken
+laad_wachtrij      = collections.deque()   # Blokken die nog aangemaakt moeten worden
+verwijder_wachtrij = collections.deque()   # Blokken die nog verwijderd moeten worden
+vorige_chunk       = None                  # Was de speler in dit chunk in de vorige frame?
 
 
 def chunk_van_pos(x, z):
@@ -160,11 +162,13 @@ def laad_chunk(cx, cz):
 
 
 def verwijder_chunk(cx, cz):
-    """Verwijdert alle blokken van een stukje wereld."""
+    """Zet alle blokken van een stukje wereld in de verwijderwachtrij."""
     if (cx, cz) not in geladen_chunks:
         return
+    # Verwijder het chunk meteen uit de lijst, maar de blokken zelf verdwijnen
+    # geleidelijk via de wachtrij zodat er geen haperingen zijn
     for blok in geladen_chunks.pop((cx, cz)):
-        destroy(blok)
+        verwijder_wachtrij.append(blok)
 
 
 # --- Startpositie ---
@@ -219,6 +223,12 @@ Text(
 def update():
     """Wordt elke frame aangeroepen: laad blokken en beheer chunks."""
     global vorige_chunk
+
+    # Verwijder een paar blokken per frame (geleidelijk, geen haperingen)
+    for _ in range(VERWIJDER_FRAME):
+        if not verwijder_wachtrij:
+            break
+        destroy(verwijder_wachtrij.popleft())
 
     # Maak een paar blokken aan uit de laadwachtrij
     for _ in range(BLOKKEN_FRAME):
