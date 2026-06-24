@@ -3,23 +3,26 @@ from ursina.prefabs.first_person_controller import FirstPersonController
 from perlin_noise import PerlinNoise
 import random
 import math
+import collections
 
 app = Ursina()
 
 # --- Instellingen ---
-WERELD_GROOTTE = 30   # De wereld is 30 x 30 blokken groot
-WERELD_DIEPTE  = 6    # Hoe diep de grond gaat
+CHUNK_GROOTTE  = 8    # Een stukje wereld is 8x8 blokken groot
+RENDER_AFSTAND = 2    # Hoeveel stukjes rondom de speler worden geladen (2 = 5x5 stukjes)
+WERELD_DIEPTE  = 4    # Hoe diep de grond gaat
+BLOKKEN_FRAME  = 40   # Blokken per frame aanmaken (hogere waarde = sneller maar meer haperingen)
 
 # Willekeurig zaad: elke keer een andere wereld!
 WERELD_ZAAD = random.randint(1, 9999)
-print(f"Wereld zaad: {WERELD_ZAAD}  (bewaar dit getal voor dezelfde wereld)")
+print(f"Wereld zaad: {WERELD_ZAAD}")
 
-# Drie lagen ruis: grote bergen + middelgrote heuvels + kleine details
+# Drie lagen ruis voor een natuurlijk landschap
 ruis_groot  = PerlinNoise(octaves=3,  seed=WERELD_ZAAD)
 ruis_midden = PerlinNoise(octaves=6,  seed=WERELD_ZAAD + 1)
 ruis_klein  = PerlinNoise(octaves=12, seed=WERELD_ZAAD + 2)
 
-# --- Kleuren van de blokken ---
+# --- Kleuren van de blokken (waarden van 0 tot 1!) ---
 KLEUREN = {
     'gras':   color.rgb(106/255, 170/255,  60/255),
     'aarde':  color.rgb(134/255,  96/255,  67/255),
@@ -30,76 +33,79 @@ KLEUREN = {
     'sneeuw': color.rgb(230/255, 230/255, 250/255),
 }
 
-# Lijst van alle blokken in de wereld
-blokken = []
-
 # Welk blok de speler in de hand heeft
 huidig_blok = 'gras'
+
+# Bijhouden welke stukjes wereld geladen zijn
+geladen_chunks  = {}                    # (cx, cz) -> verzameling van blokken
+laad_wachtrij   = collections.deque()   # Blokken die nog aangemaakt moeten worden
+vorige_chunk    = None                  # Was de speler in dit chunk in de vorige frame?
+
+
+def chunk_van_pos(x, z):
+    """Berekent in welk stukje wereld een positie ligt."""
+    return (math.floor(x / CHUNK_GROOTTE), math.floor(z / CHUNK_GROOTTE))
 
 
 class Blok(Button):
     """Een enkel blok in de wereld."""
 
-    def __init__(self, positie, blok_type='gras'):
+    def __init__(self, positie, blok_type='gras', chunk_sleutel=None):
         kleur = KLEUREN.get(blok_type, color.white)
         super().__init__(
             parent=scene,
             position=positie,
             model='cube',
-            origin_y=0.5,       # Positie is de ONDERKANT van het blok
+            origin_y=0.5,
             texture='white_cube',
             color=kleur,
             highlight_color=color.lime,
         )
-        self.blok_type = blok_type
-        blokken.append(self)
+        self.blok_type    = blok_type
+        self.chunk_sleutel = chunk_sleutel  # In welk stukje wereld zit dit blok?
 
     def input(self, toets):
         if self.hovered:
             if toets == 'left mouse down':
-                # Blok afbreken (check eerst of het blok nog in de lijst staat)
-                if self in blokken:
-                    blokken.remove(self)
+                # Blok afbreken
+                if self.chunk_sleutel in geladen_chunks:
+                    geladen_chunks[self.chunk_sleutel].discard(self)
                 destroy(self)
+
             if toets == 'right mouse down':
                 # Blok plaatsen naast dit blok
-                Blok(positie=self.position + mouse.normal, blok_type=huidig_blok)
+                nieuwe_pos   = self.position + mouse.normal
+                nieuwe_chunk = chunk_van_pos(nieuwe_pos.x, nieuwe_pos.z)
+                nieuw = Blok(positie=nieuwe_pos, blok_type=huidig_blok, chunk_sleutel=nieuwe_chunk)
+                if nieuwe_chunk in geladen_chunks:
+                    geladen_chunks[nieuwe_chunk].add(nieuw)
 
 
 def hoogte_op(x, z):
-    """Berekent de grondhoogte op (x, z) met Perlin ruis — zo krijg je echte bergen."""
-    # Schaal de positie zodat de wereld er mooi uitziet
-    nx = x / WERELD_GROOTTE
-    nz = z / WERELD_GROOTTE
-    # Combineer drie lagen voor een natuurlijk landschap
-    h = (ruis_groot([nx, nz])  * 14 +   # Grote bergen
-         ruis_midden([nx, nz]) *  5 +   # Middelgrote heuvels
-         ruis_klein([nx, nz])  *  1.5)  # Kleine golfjes
-    # Verschuif naar basisgrond 10 (hoogte is altijd positief)
+    """Berekent de grondhoogte op positie (x, z) met Perlin ruis."""
+    nx = x * 0.04
+    nz = z * 0.04
+    h = (ruis_groot([nx, nz])  * 14 +
+         ruis_midden([nx, nz]) *  5 +
+         ruis_klein([nx, nz])  *  1.5)
     return int(h + 10)
 
 
 def bepaal_blok_type(y, grond_hoogte):
-    """Geeft het juiste bloktype terug op basis van hoogte."""
+    """Geeft het juiste bloktype terug op basis van de hoogte."""
     if y == grond_hoogte:
-        if y <= 5:
-            return 'zand'    # Laag land bij water = zand
-        elif y >= 18:
-            return 'sneeuw'  # Hoge bergtoppen = sneeuw
-        else:
-            return 'gras'
-    elif y >= grond_hoogte - 3:
+        if y <= 5:   return 'zand'
+        if y >= 18:  return 'sneeuw'
+        return 'gras'
+    if y >= grond_hoogte - 3:
         return 'aarde'
-    else:
-        return 'steen'
+    return 'steen'
 
 
 def is_grot(x, y, z, grond_hoogte):
     """Bepaalt of er op deze plek een grot is."""
-    # Grotten beginnen pas 4 lagen onder de grond
     if y >= grond_hoogte - 3:
         return False
-    # Wiskundige golven maken holtes in de steen
     golfwaarde = (
         math.sin(x * 0.5 + WERELD_ZAAD * 0.01) * math.cos(z * 0.5) +
         math.sin(y * 0.8 + x * 0.3) +
@@ -108,65 +114,95 @@ def is_grot(x, y, z, grond_hoogte):
     return golfwaarde > 1.4
 
 
-def plaats_boom(x, grond_hoogte, z):
-    """Plaatst een boom op de gegeven plek."""
-    stam_hoogte = random.randint(3, 5)
-    # Stam
-    for y in range(1, stam_hoogte + 1):
-        Blok(positie=(x, grond_hoogte + y, z), blok_type='hout')
-    # Bladeren als een ronde bol bovenop de stam
-    top = grond_hoogte + stam_hoogte
+def voeg_boom_toe(x, grond, z, sleutel, rng):
+    """Voegt een boom toe aan de laadwachtrij."""
+    stam_h = rng.randint(3, 5)
+    for y in range(1, stam_h + 1):
+        laad_wachtrij.append(((x, grond + y, z), 'hout', sleutel))
+    top = grond + stam_h
     for bx in range(-2, 3):
         for by in range(0, 4):
             for bz in range(-2, 3):
-                afstand = abs(bx) + abs(bz) + abs(by) * 0.7
-                if afstand <= 2.5:
+                if abs(bx) + abs(bz) + abs(by) * 0.7 <= 2.5:
                     if not (bx == 0 and bz == 0 and by < 2):
-                        Blok(positie=(x + bx, top + by, z + bz), blok_type='blad')
+                        laad_wachtrij.append(((x + bx, top + by, z + bz), 'blad', sleutel))
 
 
-SPAWN_X = WERELD_GROOTTE // 2
-SPAWN_Z = WERELD_GROOTTE // 2
+def laad_chunk(cx, cz):
+    """Voegt alle blokken van een stukje wereld toe aan de laadwachtrij."""
+    if (cx, cz) in geladen_chunks:
+        return  # Dit stukje is al (aan het) laden
 
+    geladen_chunks[(cx, cz)] = set()
+    sleutel = (cx, cz)
+    # Vaste willekeur per chunk, zodat bomen altijd op dezelfde plek staan
+    rng = random.Random(WERELD_ZAAD + cx * 73856093 + cz * 19349663)
 
-def maak_wereld():
-    """Maakt de hele 3D wereld: bergen, grotten en bomen."""
-    for x in range(WERELD_GROOTTE):
-        for z in range(WERELD_GROOTTE):
+    for x in range(cx * CHUNK_GROOTTE, (cx + 1) * CHUNK_GROOTTE):
+        for z in range(cz * CHUNK_GROOTTE, (cz + 1) * CHUNK_GROOTTE):
             grond_hoogte = hoogte_op(x, z)
+            blok_type    = bepaal_blok_type(grond_hoogte, grond_hoogte)
 
-            # Bovenste laag (gras, zand of sneeuw afhankelijk van hoogte)
-            blok_type = bepaal_blok_type(grond_hoogte, grond_hoogte)
-            Blok(positie=(x, grond_hoogte, z), blok_type=blok_type)
+            # Bovenste laag
+            laad_wachtrij.append(((x, grond_hoogte, z), blok_type, sleutel))
 
-            # Lagen eronder (aarde en steen, met grotten)
+            # Lagen eronder
             for y in range(grond_hoogte - 1, grond_hoogte - WERELD_DIEPTE, -1):
-                if is_grot(x, y, z, grond_hoogte):
-                    continue  # Hier is een grot, geen blok plaatsen
-                Blok(positie=(x, y, z), blok_type=bepaal_blok_type(y, grond_hoogte))
+                if not is_grot(x, y, z, grond_hoogte):
+                    laad_wachtrij.append(((x, y, z), bepaal_blok_type(y, grond_hoogte), sleutel))
 
-            # Kleine kans op een boom (alleen op gras, niet te steil, niet op de startplek)
-            is_startplek = (x == SPAWN_X and z == SPAWN_Z)
-            if not is_startplek and blok_type == 'gras' and random.random() < 0.05:
-                hoogte_links  = hoogte_op(max(0, x - 1), z)
-                hoogte_rechts = hoogte_op(min(WERELD_GROOTTE - 1, x + 1), z)
-                if abs(grond_hoogte - hoogte_links) <= 1 and abs(grond_hoogte - hoogte_rechts) <= 1:
-                    plaats_boom(x, grond_hoogte, z)
+            # Soms een boom (niet op de startpositie)
+            is_startplek = (cx == 0 and cz == 0 and x == 0 and z == 0)
+            if not is_startplek and blok_type == 'gras' and rng.random() < 0.05:
+                if abs(grond_hoogte - hoogte_op(x - 1, z)) <= 1:
+                    if abs(grond_hoogte - hoogte_op(x + 1, z)) <= 1:
+                        voeg_boom_toe(x, grond_hoogte, z, sleutel, rng)
 
 
-# --- Maak de wereld aan ---
-print("Wereld wordt aangemaakt, even wachten...")
-maak_wereld()
-print("Klaar!")
+def verwijder_chunk(cx, cz):
+    """Verwijdert alle blokken van een stukje wereld."""
+    if (cx, cz) not in geladen_chunks:
+        return
+    for blok in geladen_chunks.pop((cx, cz)):
+        destroy(blok)
 
-# --- Zet de speler bovenop de grond in het midden ---
+
+# --- Startpositie ---
+SPAWN_X = 0
+SPAWN_Z = 0
+spawn_grond  = hoogte_op(SPAWN_X, SPAWN_Z)
+start_chunk  = chunk_van_pos(SPAWN_X, SPAWN_Z)
+
+# Laad de oppervlakte van het startchunk DIRECT, zodat de speler niet valt
+geladen_chunks[start_chunk] = set()
+start_rng = random.Random(WERELD_ZAAD + start_chunk[0] * 73856093 + start_chunk[1] * 19349663)
+
+for sx in range(start_chunk[0] * CHUNK_GROOTTE, (start_chunk[0] + 1) * CHUNK_GROOTTE):
+    for sz in range(start_chunk[1] * CHUNK_GROOTTE, (start_chunk[1] + 1) * CHUNK_GROOTTE):
+        gh = hoogte_op(sx, sz)
+        bt = bepaal_blok_type(gh, gh)
+        b  = Blok(positie=(sx, gh, sz), blok_type=bt, chunk_sleutel=start_chunk)
+        geladen_chunks[start_chunk].add(b)
+        # Stel de ondergrond in de wachtrij
+        for y in range(gh - 1, gh - WERELD_DIEPTE, -1):
+            if not is_grot(sx, y, sz, gh):
+                laad_wachtrij.append(((sx, y, sz), bepaal_blok_type(y, gh), start_chunk))
+        # Bomen (niet op startplek)
+        if not (sx == SPAWN_X and sz == SPAWN_Z) and bt == 'gras' and start_rng.random() < 0.05:
+            if abs(gh - hoogte_op(sx - 1, sz)) <= 1 and abs(gh - hoogte_op(sx + 1, sz)) <= 1:
+                voeg_boom_toe(sx, gh, sz, start_chunk, start_rng)
+
+# Stel omliggende chunks in de wachtrij
+for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
+    for dcz in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
+        chunk = (start_chunk[0] + dcx, start_chunk[1] + dcz)
+        if chunk != start_chunk:
+            laad_chunk(*chunk)
+
+# --- Speler ---
 speler = FirstPersonController()
-grond = hoogte_op(SPAWN_X, SPAWN_Z)
-# Spawn EXACT op het grondblok — de FirstPersonController detecteert grond
-# pas als afstand <= height+0.1 (dus max 0.1 boven het blok)
-speler.position = (SPAWN_X, grond, SPAWN_Z)
+speler.position = (SPAWN_X, spawn_grond, SPAWN_Z)
 
-# --- Lucht ---
 Sky()
 
 # --- Uitleg op het scherm ---
@@ -180,10 +216,42 @@ Text(
 )
 
 
+def update():
+    """Wordt elke frame aangeroepen: laad blokken en beheer chunks."""
+    global vorige_chunk
+
+    # Maak een paar blokken aan uit de laadwachtrij
+    for _ in range(BLOKKEN_FRAME):
+        if not laad_wachtrij:
+            break
+        positie, blok_type, sleutel = laad_wachtrij.popleft()
+        if sleutel not in geladen_chunks:
+            continue  # Dit stukje is al verwijderd, sla over
+        blok = Blok(positie=positie, blok_type=blok_type, chunk_sleutel=sleutel)
+        geladen_chunks[sleutel].add(blok)
+
+    # Controleer of de speler van stukje wereld is veranderd
+    speler_chunk = chunk_van_pos(speler.x, speler.z)
+    if speler_chunk == vorige_chunk:
+        return  # Speler is nog in hetzelfde stukje, niets te doen
+    vorige_chunk = speler_chunk
+    cx, cz = speler_chunk
+
+    # Laad nieuwe stukjes rondom de speler
+    for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
+        for dcz in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
+            chunk = (cx + dcx, cz + dcz)
+            if chunk not in geladen_chunks:
+                laad_chunk(*chunk)
+
+    # Verwijder stukjes die te ver weg zijn
+    for chunk in list(geladen_chunks.keys()):
+        if abs(chunk[0] - cx) > RENDER_AFSTAND + 1 or abs(chunk[1] - cz) > RENDER_AFSTAND + 1:
+            verwijder_chunk(*chunk)
+
+
 def input(toets):
     global huidig_blok
-
-    # Kies welk blok je in de hand hebt met de cijfertoetsen
     if toets == '1': huidig_blok = 'gras';   print("Je hebt nu: GRAS")
     if toets == '2': huidig_blok = 'aarde';  print("Je hebt nu: AARDE")
     if toets == '3': huidig_blok = 'steen';  print("Je hebt nu: STEEN")
