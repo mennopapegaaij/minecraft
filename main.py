@@ -43,6 +43,15 @@ laad_wachtrij      = collections.deque()   # Blokken die nog aangemaakt moeten w
 verwijder_wachtrij = collections.deque()   # Blokken die nog verwijderd moeten worden
 vorige_chunk       = None                  # Was de speler in dit chunk in de vorige frame?
 
+# Telefoonboek: op welke plek staat welk blok? (x, y, z) -> Blok
+# Hiermee kunnen we snel opzoeken of ergens al een blok staat.
+blok_op_positie    = {}
+
+
+def positie_sleutel(positie):
+    """Maakt een nette sleutel van hele getallen voor het telefoonboek."""
+    return (round(positie[0]), round(positie[1]), round(positie[2]))
+
 
 def chunk_van_pos(x, z):
     """Berekent in welk stukje wereld een positie ligt."""
@@ -65,6 +74,8 @@ class Blok(Button):
         )
         self.blok_type    = blok_type
         self.chunk_sleutel = chunk_sleutel  # In welk stukje wereld zit dit blok?
+        # Zet dit blok in het telefoonboek, zodat we het kunnen terugvinden
+        blok_op_positie[positie_sleutel(positie)] = self
 
     def input(self, toets):
         if self.hovered:
@@ -72,11 +83,18 @@ class Blok(Button):
                 # Blok afbreken
                 if self.chunk_sleutel in geladen_chunks:
                     geladen_chunks[self.chunk_sleutel].discard(self)
+                sleutel = positie_sleutel(self.position)
+                blok_op_positie.pop(sleutel, None)   # Uit het telefoonboek halen
                 destroy(self)
+                # Nu de buren laten zien die hierdoor zichtbaar worden,
+                # anders kijk je door een gat de leegte in.
+                onthul_buren(sleutel[0], sleutel[1], sleutel[2])
 
             if toets == 'right mouse down':
                 # Blok plaatsen naast dit blok
                 nieuwe_pos   = self.position + mouse.normal
+                if positie_sleutel(nieuwe_pos) in blok_op_positie:
+                    return  # Hier staat al een blok, niet er nog een bovenop
                 nieuwe_chunk = chunk_van_pos(nieuwe_pos.x, nieuwe_pos.z)
                 nieuw = Blok(positie=nieuwe_pos, blok_type=huidig_blok, chunk_sleutel=nieuwe_chunk)
                 if nieuwe_chunk in geladen_chunks:
@@ -116,6 +134,39 @@ def is_grot(x, y, z, grond_hoogte):
     return golfwaarde > 1.4
 
 
+# De 6 buren van een blok: links, rechts, onder, boven, voor, achter
+BUREN = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+
+
+def is_gevuld(x, y, z):
+    """Zit hier vaste grond? (geen lucht, geen grot)"""
+    grond = hoogte_op(x, z)
+    if y > grond:
+        return False                 # Boven de grond = lucht
+    return not is_grot(x, y, z, grond)  # In een grot = leeg, anders gevuld
+
+
+def is_zichtbaar(x, y, z):
+    """Een blok is zichtbaar als minstens één van zijn 6 buren leeg is."""
+    for dx, dy, dz in BUREN:
+        if not is_gevuld(x + dx, y + dy, z + dz):
+            return True
+    return False
+
+
+def onthul_buren(x, y, z):
+    """Maakt buur-blokken zichtbaar nadat er een blok is afgebroken."""
+    for dx, dy, dz in BUREN:
+        bx, by, bz = x + dx, y + dy, z + dz
+        # Hoort hier grond te zitten, maar staat er nog geen blok? Dan maken we het.
+        if is_gevuld(bx, by, bz) and (bx, by, bz) not in blok_op_positie:
+            chunk = chunk_van_pos(bx, bz)
+            blok_type = bepaal_blok_type(by, hoogte_op(bx, bz))
+            nieuw = Blok(positie=(bx, by, bz), blok_type=blok_type, chunk_sleutel=chunk)
+            if chunk in geladen_chunks:
+                geladen_chunks[chunk].add(nieuw)
+
+
 def voeg_boom_toe(x, grond, z, sleutel, rng):
     """Voegt een boom toe aan de laadwachtrij."""
     stam_h = rng.randint(3, 5)
@@ -145,12 +196,12 @@ def laad_chunk(cx, cz):
             grond_hoogte = hoogte_op(x, z)
             blok_type    = bepaal_blok_type(grond_hoogte, grond_hoogte)
 
-            # Bovenste laag
+            # Bovenste laag (altijd zichtbaar, er is lucht boven)
             laad_wachtrij.append(((x, grond_hoogte, z), blok_type, sleutel))
 
-            # Lagen eronder
+            # Lagen eronder: alleen toevoegen als je het blok kunt zien
             for y in range(grond_hoogte - 1, grond_hoogte - WERELD_DIEPTE, -1):
-                if not is_grot(x, y, z, grond_hoogte):
+                if not is_grot(x, y, z, grond_hoogte) and is_zichtbaar(x, y, z):
                     laad_wachtrij.append(((x, y, z), bepaal_blok_type(y, grond_hoogte), sleutel))
 
             # Soms een boom (niet op de startpositie)
@@ -187,9 +238,9 @@ for sx in range(start_chunk[0] * CHUNK_GROOTTE, (start_chunk[0] + 1) * CHUNK_GRO
         bt = bepaal_blok_type(gh, gh)
         b  = Blok(positie=(sx, gh, sz), blok_type=bt, chunk_sleutel=start_chunk)
         geladen_chunks[start_chunk].add(b)
-        # Stel de ondergrond in de wachtrij
+        # Stel de ondergrond in de wachtrij (alleen blokken die je kunt zien)
         for y in range(gh - 1, gh - WERELD_DIEPTE, -1):
-            if not is_grot(sx, y, sz, gh):
+            if not is_grot(sx, y, sz, gh) and is_zichtbaar(sx, y, sz):
                 laad_wachtrij.append(((sx, y, sz), bepaal_blok_type(y, gh), start_chunk))
         # Bomen (niet op startplek)
         if not (sx == SPAWN_X and sz == SPAWN_Z) and bt == 'gras' and start_rng.random() < 0.05:
@@ -268,7 +319,9 @@ def update():
     for _ in range(VERWIJDER_FRAME):
         if not verwijder_wachtrij:
             break
-        destroy(verwijder_wachtrij.popleft())
+        blok = verwijder_wachtrij.popleft()
+        blok_op_positie.pop(positie_sleutel(blok.position), None)  # Uit telefoonboek
+        destroy(blok)
 
     # Maak een paar blokken aan uit de laadwachtrij
     for _ in range(BLOKKEN_FRAME):
@@ -277,6 +330,8 @@ def update():
         positie, blok_type, sleutel = laad_wachtrij.popleft()
         if sleutel not in geladen_chunks:
             continue  # Dit stukje is al verwijderd, sla over
+        if positie_sleutel(positie) in blok_op_positie:
+            continue  # Hier staat al een blok, geen dubbele maken
         blok = Blok(positie=positie, blok_type=blok_type, chunk_sleutel=sleutel)
         geladen_chunks[sleutel].add(blok)
 
