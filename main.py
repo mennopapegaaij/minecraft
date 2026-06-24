@@ -209,20 +209,60 @@ speler.position = (SPAWN_X, spawn_grond, SPAWN_Z)
 
 Sky()
 
+# Zet de ingebouwde FPS-teller van Ursina aan (verschijnt rechtsboven)
+window.fps_counter.enabled = True
+
 # --- Uitleg op het scherm ---
 Text(
     text="[1] Gras  [2] Aarde  [3] Steen  [4] Hout  [5] Blad  [6] Zand  [7] Sneeuw\n"
          "Linker muis = afbreken   Rechter muis = plaatsen\n"
-         "WASD = lopen   Spatie = springen   Escape = stoppen",
+         "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje aan/uit",
     position=(-0.85, 0.47),
     scale=1.1,
     background=True,
 )
 
+# --- Meet-schermpje (linksonder) ---
+# Dit laat zien hoe snel het spel draait en hoeveel blokken er zijn.
+# Zo kunnen we uitzoeken wanneer het spel hapert.
+debug_tekst = Text(
+    text="",
+    position=(-0.85, -0.30),
+    scale=1.1,
+    background=True,
+)
+
+# Een rustig gemiddelde van de FPS, zodat het getal niet zo wild springt
+gemiddelde_fps = 60.0
+# Kleine timer: we werken de tekst maar een paar keer per seconde bij
+debug_timer = 0.0
+
 
 def update():
     """Wordt elke frame aangeroepen: laad blokken en beheer chunks."""
-    global vorige_chunk
+    global vorige_chunk, gemiddelde_fps, debug_timer
+
+    # --- Meet-schermpje bijwerken ---
+    if debug_tekst.enabled:
+        # FPS = beelden per seconde. time.dt is de tijd die de vorige frame duurde.
+        # We mengen het nieuwe getal langzaam in het gemiddelde, zodat het rustig blijft.
+        if time.dt > 0:
+            huidige_fps    = 1 / time.dt
+            gemiddelde_fps = gemiddelde_fps * 0.95 + huidige_fps * 0.05
+
+        # Werk de tekst maar ~4 keer per seconde bij (niet elke frame)
+        debug_timer += time.dt
+        if debug_timer >= 0.25:
+            debug_timer = 0.0
+            aantal_blokken = sum(len(s) for s in geladen_chunks.values())
+            speler_chunk   = chunk_van_pos(speler.x, speler.z)
+            debug_tekst.text = (
+                f"FPS: {round(gemiddelde_fps)}\n"
+                f"Blokken in wereld: {aantal_blokken}\n"
+                f"Laad-wachtrij: {len(laad_wachtrij)}\n"
+                f"Verwijder-wachtrij: {len(verwijder_wachtrij)}\n"
+                f"Chunk: {speler_chunk}"
+            )
 
     # Verwijder een paar blokken per frame (geleidelijk, geen haperingen)
     for _ in range(VERWIJDER_FRAME):
@@ -269,6 +309,10 @@ def input(toets):
     if toets == '5': huidig_blok = 'blad';   print("Je hebt nu: BLAD")
     if toets == '6': huidig_blok = 'zand';   print("Je hebt nu: ZAND")
     if toets == '7': huidig_blok = 'sneeuw'; print("Je hebt nu: SNEEUW")
+    if toets == 'f3':
+        # Zet het meet-schermpje en de FPS-teller samen aan of uit
+        debug_tekst.enabled         = not debug_tekst.enabled
+        window.fps_counter.enabled  = debug_tekst.enabled
     if toets == 'escape':
         quit()
 
