@@ -9,13 +9,12 @@ app = Ursina()
 
 # --- Instellingen ---
 CHUNK_GROOTTE    = 8    # Een stukje wereld is 8x8 blokken groot
-RENDER_AFSTAND   = 1    # Hoeveel stukjes rondom de speler worden geladen (1 = 3x3 stukjes)
-                        # Hoger = je ziet verder, maar het spel wordt wel langzamer!
+RENDER_AFSTAND   = 3    # Hoeveel stukjes rondom de speler je ziet (3 = 7x7 stukjes)
+                        # Dankzij het Minecraft-trucje mag dit nu veel groter zijn!
 WERELD_DIEPTE    = 4    # Hoe diep de grond gaat
 DOEL_FPS         = 50   # Hoe snel we het spel willen laten draaien (beeldjes per seconde)
 
 # Het spel mag niet sneller gaan dan DOEL_FPS (een soort maximumsnelheid).
-# Zo schiet het niet onnodig naar 150 FPS en weer terug, maar blijft het rustig.
 from panda3d.core import ClockObject
 spel_klok = ClockObject.getGlobalClock()
 spel_klok.setMode(ClockObject.MLimited)
@@ -39,88 +38,25 @@ KLEUREN = {
     'blad':   color.rgb( 34/255, 120/255,  34/255),
     'zand':   color.rgb(210/255, 190/255, 140/255),
     'sneeuw': color.rgb(230/255, 230/255, 250/255),
-    # Water heeft een vierde getal (0.6): dat is de doorzichtigheid.
-    # 1 = helemaal dicht, 0 = onzichtbaar. 0.6 = je kunt er een beetje doorheen kijken.
     'water':  color.rgba(45/255, 110/255, 200/255, 0.6),
 }
 
-# Tot welke hoogte staat er water in de lage plekken
-WATER_NIVEAU = 6
+WATER_NIVEAU = 6          # Tot welke hoogte staat er water in de lage plekken
+huidig_blok  = 'gras'     # Welk blok de speler in de hand heeft
 
-# Welk blok de speler in de hand heeft
-huidig_blok = 'gras'
-
-# Bijhouden welke stukjes wereld geladen zijn
-geladen_chunks     = {}                    # (cx, cz) -> verzameling van blokken
-laad_wachtrij      = collections.deque()   # Blokken die nog aangemaakt moeten worden
-verwijder_wachtrij = collections.deque()   # Blokken die nog verwijderd moeten worden
-vorige_chunk       = None                  # Was de speler in dit chunk in de vorige frame?
-
-# Telefoonboek: op welke plek staat welk blok? (x, y, z) -> Blok
-# Hiermee kunnen we snel opzoeken of ergens al een blok staat.
-blok_op_positie    = {}
-
-
-def positie_sleutel(positie):
-    """Maakt een nette sleutel van hele getallen voor het telefoonboek."""
-    return (round(positie[0]), round(positie[1]), round(positie[2]))
+# --- Het geheugen van de wereld ---
+# 'wereld' is het grote telefoonboek: op welke plek (x, y, z) staat welk soort blok?
+# Dit zijn alleen getallen, geen 3D-modellen. Heel licht voor de computer.
+wereld          = {}                    # (x, y, z) -> bloktype, bv 'gras'
+chunk_blokken   = {}                    # (cx, cz) -> dict met de blokken van dat stukje
+chunk_modellen  = {}                    # (cx, cz) -> lijst met de samengeplakte 3D-modellen
+bouw_wachtrij   = collections.deque()   # stukjes die nog een 3D-model moeten krijgen
+vorige_chunk    = None
 
 
 def chunk_van_pos(x, z):
     """Berekent in welk stukje wereld een positie ligt."""
     return (math.floor(x / CHUNK_GROOTTE), math.floor(z / CHUNK_GROOTTE))
-
-
-# --- Geluiden ---
-# We laden de twee geluidjes uit de map 'assets'.
-# autoplay=False betekent: niet meteen afspelen, maar pas als wij dat zeggen.
-geluid_plaatsen = Audio('plop',  autoplay=False)   # plop bij plaatsen
-geluid_afbreken = Audio('boink', autoplay=False)   # boink bij afbreken
-
-
-class Blok(Button):
-    """Een enkel blok in de wereld."""
-
-    def __init__(self, positie, blok_type='gras', chunk_sleutel=None):
-        kleur = KLEUREN.get(blok_type, color.white)
-        super().__init__(
-            parent=scene,
-            position=positie,
-            model='cube',
-            origin_y=0.5,
-            texture='white_cube',
-            color=kleur,
-            highlight_color=color.lime,
-        )
-        self.blok_type    = blok_type
-        self.chunk_sleutel = chunk_sleutel  # In welk stukje wereld zit dit blok?
-        # Zet dit blok in het telefoonboek, zodat we het kunnen terugvinden
-        blok_op_positie[positie_sleutel(positie)] = self
-
-    def input(self, toets):
-        if self.hovered:
-            if toets == 'left mouse down':
-                # Blok afbreken
-                geluid_afbreken.play()   # boink!
-                if self.chunk_sleutel in geladen_chunks:
-                    geladen_chunks[self.chunk_sleutel].discard(self)
-                sleutel = positie_sleutel(self.position)
-                blok_op_positie.pop(sleutel, None)   # Uit het telefoonboek halen
-                destroy(self)
-                # Nu de buren laten zien die hierdoor zichtbaar worden,
-                # anders kijk je door een gat de leegte in.
-                onthul_buren(sleutel[0], sleutel[1], sleutel[2])
-
-            if toets == 'right mouse down':
-                # Blok plaatsen naast dit blok
-                nieuwe_pos   = self.position + mouse.normal
-                if positie_sleutel(nieuwe_pos) in blok_op_positie:
-                    return  # Hier staat al een blok, niet er nog een bovenop
-                nieuwe_chunk = chunk_van_pos(nieuwe_pos.x, nieuwe_pos.z)
-                nieuw = Blok(positie=nieuwe_pos, blok_type=huidig_blok, chunk_sleutel=nieuwe_chunk)
-                if nieuwe_chunk in geladen_chunks:
-                    geladen_chunks[nieuwe_chunk].add(nieuw)
-                geluid_plaatsen.play()   # plop!
 
 
 def hoogte_op(x, z):
@@ -156,102 +92,165 @@ def is_grot(x, y, z, grond_hoogte):
     return golfwaarde > 1.4
 
 
-# De 6 buren van een blok: links, rechts, onder, boven, voor, achter
+# De 6 buren van een blok: rechts, links, boven, onder, voor, achter
 BUREN = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
 
 
-def is_gevuld(x, y, z):
-    """Zit hier vaste grond? (geen lucht, geen grot)"""
-    grond = hoogte_op(x, z)
-    if y > grond:
-        return False                 # Boven de grond = lucht
-    return not is_grot(x, y, z, grond)  # In een grot = leeg, anders gevuld
-
-
-def is_zichtbaar(x, y, z):
-    """Een blok is zichtbaar als minstens één van zijn 6 buren leeg is."""
+def blok_zichtbaar(x, y, z):
+    """Een blok hoef je alleen te tekenen als minstens één buur leeg is.
+    Blokken die helemaal binnenin de berg zitten, zie je toch niet."""
     for dx, dy, dz in BUREN:
-        if not is_gevuld(x + dx, y + dy, z + dz):
+        if (x + dx, y + dy, z + dz) not in wereld:
             return True
     return False
 
 
-def onthul_buren(x, y, z):
-    """Maakt buur-blokken zichtbaar nadat er een blok is afgebroken."""
-    for dx, dy, dz in BUREN:
-        bx, by, bz = x + dx, y + dy, z + dz
-        # Hoort hier grond te zitten, maar staat er nog geen blok? Dan maken we het.
-        if is_gevuld(bx, by, bz) and (bx, by, bz) not in blok_op_positie:
-            chunk = chunk_van_pos(bx, bz)
-            blok_type = bepaal_blok_type(by, hoogte_op(bx, bz))
-            nieuw = Blok(positie=(bx, by, bz), blok_type=blok_type, chunk_sleutel=chunk)
-            if chunk in geladen_chunks:
-                geladen_chunks[chunk].add(nieuw)
-
-
-def voeg_boom_toe(x, grond, z, sleutel, rng):
-    """Voegt een boom toe aan de laadwachtrij."""
+def voeg_boom_toe(blokken, x, grond, z, rng):
+    """Zet een boom in de blokken-lijst van een stukje wereld."""
     stam_h = rng.randint(3, 5)
     for y in range(1, stam_h + 1):
-        laad_wachtrij.append(((x, grond + y, z), 'hout', sleutel))
+        blokken[(x, grond + y, z)] = 'hout'
     top = grond + stam_h
     for bx in range(-2, 3):
         for by in range(0, 4):
             for bz in range(-2, 3):
                 if abs(bx) + abs(bz) + abs(by) * 0.7 <= 2.5:
                     if not (bx == 0 and bz == 0 and by < 2):
-                        laad_wachtrij.append(((x + bx, top + by, z + bz), 'blad', sleutel))
+                        blokken[(x + bx, top + by, z + bz)] = 'blad'
 
 
-def voeg_water_toe(x, grond, z, sleutel):
-    """Vult de lucht boven een lage plek met water, tot aan het waterniveau."""
-    for y in range(grond + 1, WATER_NIVEAU + 1):
-        laad_wachtrij.append(((x, y, z), 'water', sleutel))
+def genereer_chunk_data(cx, cz):
+    """Bedenkt welke blokken er in een stukje wereld staan (alleen getallen,
+    nog geen 3D-modellen). Slaat ze op in het telefoonboek."""
+    if (cx, cz) in chunk_blokken:
+        return  # Dit stukje is al bedacht
 
-
-def laad_chunk(cx, cz):
-    """Voegt alle blokken van een stukje wereld toe aan de laadwachtrij."""
-    if (cx, cz) in geladen_chunks:
-        return  # Dit stukje is al (aan het) laden
-
-    geladen_chunks[(cx, cz)] = set()
-    sleutel = (cx, cz)
-    # Vaste willekeur per chunk, zodat bomen altijd op dezelfde plek staan
+    blokken = {}
     rng = random.Random(WERELD_ZAAD + cx * 73856093 + cz * 19349663)
 
-    for x in range(cx * CHUNK_GROOTTE, (cx + 1) * CHUNK_GROOTTE):
-        for z in range(cz * CHUNK_GROOTTE, (cz + 1) * CHUNK_GROOTTE):
-            grond_hoogte = hoogte_op(x, z)
-            blok_type    = bepaal_blok_type(grond_hoogte, grond_hoogte)
+    for lx in range(CHUNK_GROOTTE):
+        for lz in range(CHUNK_GROOTTE):
+            x = cx * CHUNK_GROOTTE + lx
+            z = cz * CHUNK_GROOTTE + lz
+            grond = hoogte_op(x, z)
 
-            # Bovenste laag (altijd zichtbaar, er is lucht boven)
-            laad_wachtrij.append(((x, grond_hoogte, z), blok_type, sleutel))
-
-            # Lagen eronder: alleen toevoegen als je het blok kunt zien
-            for y in range(grond_hoogte - 1, grond_hoogte - WERELD_DIEPTE, -1):
-                if not is_grot(x, y, z, grond_hoogte) and is_zichtbaar(x, y, z):
-                    laad_wachtrij.append(((x, y, z), bepaal_blok_type(y, grond_hoogte), sleutel))
+            # De grond en de lagen eronder
+            for y in range(grond, grond - WERELD_DIEPTE, -1):
+                if not is_grot(x, y, z, grond):
+                    blokken[(x, y, z)] = bepaal_blok_type(y, grond)
 
             # Water in de lage plekken
-            if grond_hoogte < WATER_NIVEAU:
-                voeg_water_toe(x, grond_hoogte, z, sleutel)
+            if grond < WATER_NIVEAU:
+                for y in range(grond + 1, WATER_NIVEAU + 1):
+                    blokken[(x, y, z)] = 'water'
 
-            # Soms een boom (niet op de startpositie)
-            is_startplek = (cx == 0 and cz == 0 and x == 0 and z == 0)
-            if not is_startplek and blok_type == 'gras' and rng.random() < 0.05:
-                if abs(grond_hoogte - hoogte_op(x - 1, z)) <= 1:
-                    if abs(grond_hoogte - hoogte_op(x + 1, z)) <= 1:
-                        voeg_boom_toe(x, grond_hoogte, z, sleutel, rng)
+            # Soms een boom. We houden 2 blokken afstand van de rand,
+            # zodat de bladeren netjes binnen dit stukje wereld blijven.
+            if 2 <= lx <= CHUNK_GROOTTE - 3 and 2 <= lz <= CHUNK_GROOTTE - 3:
+                if blokken.get((x, grond, z)) == 'gras' and rng.random() < 0.05:
+                    voeg_boom_toe(blokken, x, grond, z, rng)
+
+    chunk_blokken[(cx, cz)] = blokken
+    # Zet alle blokken ook in het grote telefoonboek
+    for pos, t in blokken.items():
+        wereld[pos] = t
 
 
-def verwijder_chunk(cx, cz):
-    """Zet alle blokken van een stukje wereld in de verwijderwachtrij."""
-    if (cx, cz) not in geladen_chunks:
+def bouw_chunk_model(cx, cz):
+    """HET MINECRAFT-TRUCJE: plak alle zichtbare blokken van dit stukje wereld
+    samen tot één groot model per kleur. Daardoor hoeft de computer nog maar
+    een paar modellen te tekenen in plaats van duizenden losse blokken."""
+    # Zorg dat de buur-stukjes ook bedacht zijn, anders kloppen de randen niet
+    for ncx, ncz in [(cx, cz), (cx + 1, cz), (cx - 1, cz), (cx, cz + 1), (cx, cz - 1)]:
+        genereer_chunk_data(ncx, ncz)
+
+    verwijder_chunk_model(cx, cz)  # eventueel oud model weghalen
+
+    # Verzamel de zichtbare blokken, gesorteerd per bloktype (per kleur)
+    per_type = collections.defaultdict(list)
+    for pos, t in chunk_blokken.get((cx, cz), {}).items():
+        if blok_zichtbaar(*pos):
+            per_type[t].append(pos)
+
+    modellen = []
+    for t, posities in per_type.items():
+        ouder = Entity()
+        # Maak tijdelijk voor elk blok een kubus...
+        for (x, y, z) in posities:
+            Entity(parent=ouder, model='cube', position=(x, y, z))
+        # ...en plak ze daarna samen tot één model. De losse kubussen
+        # worden dan automatisch opgeruimd (auto_destroy).
+        ouder.combine(auto_destroy=True)
+        ouder.texture = 'white_cube'
+        ouder.color   = KLEUREN.get(t, color.white)
+        if t != 'water':
+            ouder.collider = 'mesh'   # zodat je het kunt aanklikken en erop staan
+        modellen.append(ouder)
+
+    chunk_modellen[(cx, cz)] = modellen
+
+
+def verwijder_chunk_model(cx, cz):
+    """Haalt de 3D-modellen van een stukje wereld weg (de blokken-getallen
+    blijven bewaard zolang we ze nog nodig hebben)."""
+    for model in chunk_modellen.pop((cx, cz), []):
+        destroy(model)
+
+
+def vergeet_chunk(cx, cz):
+    """Gooit een stukje wereld helemaal weg: het model én de getallen."""
+    verwijder_chunk_model(cx, cz)
+    blokken = chunk_blokken.pop((cx, cz), {})
+    for pos in blokken:
+        wereld.pop(pos, None)
+
+
+# --- Blokken breken en plaatsen (met een 'straal' vanuit je ogen) ---
+def herbouw_rond(pos):
+    """Bouwt het stukje wereld van een blok opnieuw, plus de buur-stukjes
+    (want aan de rand kan de zichtbaarheid van buren veranderen)."""
+    chunks_te_doen = set()
+    for dx, dy, dz in [(0, 0, 0)] + BUREN:
+        chunks_te_doen.add(chunk_van_pos(pos[0] + dx, pos[2] + dz))
+    for (cx, cz) in chunks_te_doen:
+        if (cx, cz) in chunk_modellen:
+            bouw_chunk_model(cx, cz)
+
+
+def breek_blok():
+    """Breekt het blok af waar je naar kijkt."""
+    if mouse.world_point is None or mouse.world_normal is None:
         return
-    # Verwijder het chunk meteen uit de lijst, maar de blokken zelf verdwijnen
-    # geleidelijk via de wachtrij zodat er geen haperingen zijn
-    for blok in geladen_chunks.pop((cx, cz)):
-        verwijder_wachtrij.append(blok)
+    # Het blok zit net BINNEN het oppervlak waar je straal op landt
+    punt = mouse.world_point - mouse.world_normal * 0.5
+    pos  = (round(punt.x), round(punt.y), round(punt.z))
+    if pos in wereld:
+        wereld.pop(pos, None)
+        cx, cz = chunk_van_pos(pos[0], pos[2])
+        chunk_blokken.get((cx, cz), {}).pop(pos, None)
+        geluid_afbreken.play()
+        herbouw_rond(pos)
+
+
+def plaats_blok():
+    """Plaatst een nieuw blok tegen het blok waar je naar kijkt."""
+    if mouse.world_point is None or mouse.world_normal is None:
+        return
+    # Het nieuwe blok komt net BUITEN het oppervlak (aan de kant waar je staat)
+    punt = mouse.world_point + mouse.world_normal * 0.5
+    pos  = (round(punt.x), round(punt.y), round(punt.z))
+    if pos in wereld:
+        return  # Hier staat al een blok
+    wereld[pos] = huidig_blok
+    cx, cz = chunk_van_pos(pos[0], pos[2])
+    chunk_blokken.setdefault((cx, cz), {})[pos] = huidig_blok
+    geluid_plaatsen.play()
+    herbouw_rond(pos)
+
+
+# --- Geluiden ---
+geluid_plaatsen = Audio('plop',  autoplay=False)   # plop bij plaatsen
+geluid_afbreken = Audio('boink', autoplay=False)   # boink bij afbreken
 
 
 class Varken(Entity):
@@ -261,30 +260,24 @@ class Varken(Entity):
         super().__init__(parent=scene, position=positie)
         roze       = color.rgb(1.0,  0.7,  0.75)
         donkerroze = color.rgb(0.9,  0.5,  0.55)
-        # Het lichaam
-        Entity(parent=self, model='cube', color=roze, scale=(0.9, 0.7, 1.3))
-        # Het snuitje aan de voorkant
+        Entity(parent=self, model='cube', color=roze, scale=(0.9, 0.7, 1.3))            # lichaam
         Entity(parent=self, model='cube', color=donkerroze,
-               position=(0, 0, 0.7), scale=(0.4, 0.4, 0.2))
-        # Vier pootjes
-        for px in (-0.3, 0.3):
+               position=(0, 0, 0.7), scale=(0.4, 0.4, 0.2))                             # snuit
+        for px in (-0.3, 0.3):                                                          # 4 pootjes
             for pz in (-0.45, 0.45):
                 Entity(parent=self, model='cube', color=donkerroze,
                        position=(px, -0.45, pz), scale=(0.2, 0.5, 0.2))
-        self.richting   = random.uniform(0, 360)  # welke kant het varken op kijkt
-        self.loop_timer = 0                        # wanneer kiest het een nieuwe richting?
+        self.richting   = random.uniform(0, 360)
+        self.loop_timer = 0
 
     def update(self):
-        # Af en toe een nieuwe willekeurige richting kiezen
         self.loop_timer -= time.dt
         if self.loop_timer <= 0:
             self.richting   = random.uniform(0, 360)
             self.loop_timer = random.uniform(1, 3)
-        # Draai die kant op en loop een beetje vooruit
         self.rotation_y = self.richting
         self.position  += self.forward * time.dt * 1.5
-        # Altijd netjes op de grond blijven staan
-        self.y = hoogte_op(self.x, self.z) + 0.7
+        self.y = hoogte_op(self.x, self.z) + 1.2   # netjes op de grond blijven
 
 
 # --- Startpositie ---
@@ -293,61 +286,36 @@ SPAWN_Z = 0
 spawn_grond  = hoogte_op(SPAWN_X, SPAWN_Z)
 start_chunk  = chunk_van_pos(SPAWN_X, SPAWN_Z)
 
-# Laad de oppervlakte van het startchunk DIRECT, zodat de speler niet valt
-geladen_chunks[start_chunk] = set()
-start_rng = random.Random(WERELD_ZAAD + start_chunk[0] * 73856093 + start_chunk[1] * 19349663)
+# Bouw de stukjes rondom de startplek meteen (zodat de speler niet valt)
+for dcx in range(-1, 2):
+    for dcz in range(-1, 2):
+        bouw_chunk_model(start_chunk[0] + dcx, start_chunk[1] + dcz)
 
-for sx in range(start_chunk[0] * CHUNK_GROOTTE, (start_chunk[0] + 1) * CHUNK_GROOTTE):
-    for sz in range(start_chunk[1] * CHUNK_GROOTTE, (start_chunk[1] + 1) * CHUNK_GROOTTE):
-        gh = hoogte_op(sx, sz)
-        bt = bepaal_blok_type(gh, gh)
-        b  = Blok(positie=(sx, gh, sz), blok_type=bt, chunk_sleutel=start_chunk)
-        geladen_chunks[start_chunk].add(b)
-        # Stel de ondergrond in de wachtrij (alleen blokken die je kunt zien)
-        for y in range(gh - 1, gh - WERELD_DIEPTE, -1):
-            if not is_grot(sx, y, sz, gh) and is_zichtbaar(sx, y, sz):
-                laad_wachtrij.append(((sx, y, sz), bepaal_blok_type(y, gh), start_chunk))
-        # Water in de lage plekken
-        if gh < WATER_NIVEAU:
-            voeg_water_toe(sx, gh, sz, start_chunk)
-        # Bomen (niet op startplek)
-        if not (sx == SPAWN_X and sz == SPAWN_Z) and bt == 'gras' and start_rng.random() < 0.05:
-            if abs(gh - hoogte_op(sx - 1, sz)) <= 1 and abs(gh - hoogte_op(sx + 1, sz)) <= 1:
-                voeg_boom_toe(sx, gh, sz, start_chunk, start_rng)
-
-# Stel omliggende chunks in de wachtrij
+# Zet de overige stukjes binnen kijk-afstand in de bouw-wachtrij
 for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
     for dcz in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
         chunk = (start_chunk[0] + dcx, start_chunk[1] + dcz)
-        if chunk != start_chunk:
-            laad_chunk(*chunk)
+        if chunk not in chunk_modellen:
+            bouw_wachtrij.append(chunk)
 
 # --- Speler ---
-# height=2 betekent: de speler is precies 2 blokken hoog.
-# Hij past dus niet door een opening van 1 blok hoog, wel door 2 blokken.
 speler = FirstPersonController(height=2)
-speler.position = (SPAWN_X, spawn_grond, SPAWN_Z)
+speler.position = (SPAWN_X, spawn_grond + 2, SPAWN_Z)
 
 # --- Dieren ---
-# Maak een paar varkens rondom de startplek
 dieren = []
 for _ in range(5):
     dx = SPAWN_X + random.randint(-6, 6)
     dz = SPAWN_Z + random.randint(-6, 6)
-    dg = hoogte_op(dx, dz)
-    dieren.append(Varken((dx, dg + 0.7, dz)))
+    dieren.append(Varken((dx, hoogte_op(dx, dz) + 1.2, dz)))
 
 # --- Dag en nacht ---
-# De lucht en de zon. De lucht verandert van kleur en de zon draait rond,
-# zodat het overdag licht is en 's nachts donker.
-lucht = Sky(color=color.rgb(0.5, 0.7, 1.0))   # de lucht (begint blauw)
-zon   = DirectionalLight()                     # de zon die de wereld verlicht
+lucht = Sky(color=color.rgb(0.5, 0.7, 1.0))
+zon   = DirectionalLight()
 zon.rotation = (45, -45, 0)
+dag_tijd   = 0.0
+DAG_LENGTE = 60.0
 
-dag_tijd   = 0.0    # telt de tijd; bepaalt hoe laat het is in het spel
-DAG_LENGTE = 60.0   # een hele dag (licht + donker) duurt 60 seconden
-
-# Zet de ingebouwde FPS-teller van Ursina aan (verschijnt rechtsboven)
 window.fps_counter.enabled = True
 
 # --- Uitleg op het scherm ---
@@ -361,140 +329,76 @@ Text(
 )
 
 # --- Meet-schermpje (linksonder) ---
-# Dit laat zien hoe snel het spel draait en hoeveel blokken er zijn.
-# Zo kunnen we uitzoeken wanneer het spel hapert.
-debug_tekst = Text(
-    text="",
-    position=(-0.85, -0.30),
-    scale=1.1,
-    background=True,
-)
-
-# Een rustig gemiddelde van de FPS, zodat het getal niet zo wild springt
+debug_tekst = Text(text="", position=(-0.85, -0.30), scale=1.1, background=True)
 gemiddelde_fps = 50.0
-# Kleine timer: we werken de tekst maar een paar keer per seconde bij
-debug_timer = 0.0
-# Hoeveel blokken we per frame laden/verwijderen. Dit getal past zich vanzelf
-# aan (de 'cruise control'): omlaag als het spel hapert, omhoog als er ruimte is.
-werk_per_frame = 20.0
+debug_timer    = 0.0
 
 
 def update():
-    """Wordt elke frame aangeroepen: laad blokken en beheer chunks."""
-    global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd, werk_per_frame
+    """Wordt elke frame aangeroepen: dag/nacht, bouwen en stukjes beheren."""
+    global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd
 
     # --- Dag en nacht laten verlopen ---
-    # time.dt is de tijd die de vorige frame duurde. Zo telt de tijd door.
     dag_tijd += time.dt
-    fractie = (dag_tijd % DAG_LENGTE) / DAG_LENGTE   # een getal van 0 tot 1: hoe ver op de dag
-
-    # De zon draait een rondje (360 graden) in een hele dag
+    fractie = (dag_tijd % DAG_LENGTE) / DAG_LENGTE
     zon.rotation = (fractie * 360, -45, 0)
-
-    # hoogte = hoe hoog de zon staat. +1 = recht boven je, -1 = aan de andere kant (nacht)
     hoogte = math.sin(fractie * 2 * math.pi)
-    helder = max(0.1, (hoogte + 1) / 2)              # overdag bijna 1, 's nachts bijna 0.1
-    # Maak de lucht lichter of donkerder door de kleur met 'helder' te vermenigvuldigen
+    helder = max(0.1, (hoogte + 1) / 2)
     lucht.color = color.rgb(0.5 * helder, 0.7 * helder, 1.0 * helder)
 
     # --- Reddingslijn: niet van de wereld af vallen ---
-    # Soms ben je sneller dan dat de grond geladen is, en val je door een gat.
-    # Als je heel diep onder de grond zakt, zetten we je weer veilig bovenop
-    # de grond op jouw plek, en zorgen we dat dat stukje wereld geladen wordt.
     grond_hier = hoogte_op(speler.x, speler.z)
     if speler.y < grond_hier - 10:
         speler.position = (speler.x, grond_hier + 2, speler.z)
-        chunk_hier = chunk_van_pos(speler.x, speler.z)
-        if chunk_hier not in geladen_chunks:
-            laad_chunk(*chunk_hier)
 
-    # Zorg dat er ALTIJD een blok onder je voeten is. Soms loop je sneller dan
-    # de grond geladen is; dan maken we dat ene blok meteen, zodat je blijft staan.
-    vx, vz   = round(speler.x), round(speler.z)
-    vy       = hoogte_op(vx, vz)
-    chunk_v  = chunk_van_pos(vx, vz)
-    if chunk_v in geladen_chunks and (vx, vy, vz) not in blok_op_positie:
-        onder = Blok(positie=(vx, vy, vz), blok_type=bepaal_blok_type(vy, vy),
-                     chunk_sleutel=chunk_v)
-        geladen_chunks[chunk_v].add(onder)
-
-    # --- FPS meten (doen we altijd, ook als het meet-schermpje uit staat) ---
-    # FPS = beelden per seconde. time.dt is de tijd die de vorige frame duurde.
-    # We mengen het nieuwe getal langzaam in het gemiddelde, zodat het rustig blijft.
+    # --- FPS meten ---
     if time.dt > 0:
-        huidige_fps    = 1 / time.dt
-        gemiddelde_fps = gemiddelde_fps * 0.95 + huidige_fps * 0.05
+        gemiddelde_fps = gemiddelde_fps * 0.95 + (1 / time.dt) * 0.05
 
-    # --- Cruise control: hoeveel NIEUWE blokken maken we deze frame? ---
-    # Nieuwe blokken maken is het zware werk. Loopt het spel te traag?
-    # Dan maken we er minder. Is er ruimte over? Dan maken we er wat meer.
-    if gemiddelde_fps < DOEL_FPS - 2:
-        werk_per_frame = max(2.0, werk_per_frame - 2.0)     # rem af
-    else:
-        werk_per_frame = min(60.0, werk_per_frame + 0.5)    # geef wat gas
-    laad_aantal = int(werk_per_frame)
+    # --- Per frame één stukje wereld samenplakken (spreidt het werk) ---
+    if bouw_wachtrij:
+        cx, cz = bouw_wachtrij.popleft()
+        if (cx, cz) not in chunk_modellen:
+            bouw_chunk_model(cx, cz)
 
     # --- Meet-schermpje bijwerken ---
     if debug_tekst.enabled:
-        # Werk de tekst maar ~4 keer per seconde bij (niet elke frame)
         debug_timer += time.dt
         if debug_timer >= 0.25:
             debug_timer = 0.0
-            aantal_blokken = sum(len(s) for s in geladen_chunks.values())
-            speler_chunk   = chunk_van_pos(speler.x, speler.z)
+            speler_chunk = chunk_van_pos(speler.x, speler.z)
             debug_tekst.text = (
                 f"FPS: {round(gemiddelde_fps)}\n"
-                f"Blokken in wereld: {aantal_blokken}\n"
-                f"Laad-wachtrij: {len(laad_wachtrij)}\n"
-                f"Verwijder-wachtrij: {len(verwijder_wachtrij)}\n"
-                f"Nieuwe blokken per frame: {laad_aantal}\n"
+                f"Stukjes wereld: {len(chunk_modellen)}\n"
+                f"Blokken in geheugen: {len(wereld)}\n"
+                f"Bouw-wachtrij: {len(bouw_wachtrij)}\n"
                 f"Chunk: {speler_chunk}"
             )
 
-    # Oude blokken opruimen maakt het spel juist SNELLER, dus dat doen we
-    # altijd flink door (nooit afremmen). Anders blijven er te veel blokken staan.
-    for _ in range(80):
-        if not verwijder_wachtrij:
-            break
-        blok = verwijder_wachtrij.popleft()
-        blok_op_positie.pop(positie_sleutel(blok.position), None)  # Uit telefoonboek
-        destroy(blok)
-
-    # Nieuwe blokken maken uit de laadwachtrij (dit remt de cruise control wel af)
-    for _ in range(laad_aantal):
-        if not laad_wachtrij:
-            break
-        positie, blok_type, sleutel = laad_wachtrij.popleft()
-        if sleutel not in geladen_chunks:
-            continue  # Dit stukje is al verwijderd, sla over
-        if positie_sleutel(positie) in blok_op_positie:
-            continue  # Hier staat al een blok, geen dubbele maken
-        blok = Blok(positie=positie, blok_type=blok_type, chunk_sleutel=sleutel)
-        geladen_chunks[sleutel].add(blok)
-
-    # Controleer of de speler van stukje wereld is veranderd
+    # --- Stukjes laden en lossen als de speler beweegt ---
     speler_chunk = chunk_van_pos(speler.x, speler.z)
     if speler_chunk == vorige_chunk:
-        return  # Speler is nog in hetzelfde stukje, niets te doen
+        return
     vorige_chunk = speler_chunk
     cx, cz = speler_chunk
 
-    # Laad nieuwe stukjes rondom de speler
+    # Nieuwe stukjes binnen kijk-afstand in de bouw-wachtrij zetten
     for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
         for dcz in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
             chunk = (cx + dcx, cz + dcz)
-            if chunk not in geladen_chunks:
-                laad_chunk(*chunk)
+            if chunk not in chunk_modellen and chunk not in bouw_wachtrij:
+                bouw_wachtrij.append(chunk)
 
-    # Verwijder stukjes die te ver weg zijn. We bewaarden er vroeger een extra
-    # ring omheen; dat waren veel te veel blokken. Nu houden we alleen wat we zien.
-    for chunk in list(geladen_chunks.keys()):
+    # Stukjes die te ver weg zijn helemaal vergeten
+    for chunk in list(chunk_modellen.keys()):
         if abs(chunk[0] - cx) > RENDER_AFSTAND or abs(chunk[1] - cz) > RENDER_AFSTAND:
-            verwijder_chunk(*chunk)
+            vergeet_chunk(*chunk)
 
 
 def input(toets):
     global huidig_blok
+    if toets == 'left mouse down':  breek_blok()
+    if toets == 'right mouse down': plaats_blok()
     if toets == '1': huidig_blok = 'gras';   print("Je hebt nu: GRAS")
     if toets == '2': huidig_blok = 'aarde';  print("Je hebt nu: AARDE")
     if toets == '3': huidig_blok = 'steen';  print("Je hebt nu: STEEN")
@@ -503,9 +407,8 @@ def input(toets):
     if toets == '6': huidig_blok = 'zand';   print("Je hebt nu: ZAND")
     if toets == '7': huidig_blok = 'sneeuw'; print("Je hebt nu: SNEEUW")
     if toets == 'f3':
-        # Zet het meet-schermpje en de FPS-teller samen aan of uit
-        debug_tekst.enabled         = not debug_tekst.enabled
-        window.fps_counter.enabled  = debug_tekst.enabled
+        debug_tekst.enabled        = not debug_tekst.enabled
+        window.fps_counter.enabled = debug_tekst.enabled
     if toets == 'escape':
         quit()
 
