@@ -19,6 +19,10 @@ from panda3d.core import ClockObject
 spel_klok = ClockObject.getGlobalClock()
 spel_klok.setMode(ClockObject.MLimited)
 spel_klok.setFrameRate(DOEL_FPS)
+# Belangrijk: nooit een grotere tijdstap nemen dan 1/30 seconde. Bij een korte
+# hapering valt de speler anders in één keer zo ver dat hij DWARS DOOR de grond
+# schiet. Met deze grens blijven de stapjes klein en blijf je netjes staan.
+spel_klok.setMaxDt(1 / 30)
 
 # Willekeurig zaad: elke keer een andere wereld!
 WERELD_ZAAD = random.randint(1, 9999)
