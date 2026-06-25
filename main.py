@@ -84,8 +84,17 @@ def bepaal_blok_type(y, grond_hoogte):
     return 'steen'
 
 
+# Staan er grotten (holtes) diep onder de grond?
+# Even uit gezet: grotten maken gaten waar je in valt en dan zie je void.
+# Met grotten UIT is de wereld lekker solide, zodat je oneindig diep kunt graven.
+# Wil je ze later terug? Zet GROTTEN_AAN op True (we maken ze dan eerst netter).
+GROTTEN_AAN = False
+
+
 def is_grot(x, y, z, grond_hoogte):
     """Bepaalt of er op deze plek een grot is."""
+    if not GROTTEN_AAN:
+        return False
     if y >= grond_hoogte - 3:
         return False
     golfwaarde = (
@@ -107,6 +116,29 @@ def blok_zichtbaar(x, y, z):
         if (x + dx, y + dy, z + dz) not in wereld:
             return True
     return False
+
+
+def is_gevuld_wiskundig(x, y, z):
+    """Volgens de WISKUNDIGE wereld: hoort hier vaste grond te zitten?
+    Dit geldt oneindig diep naar beneden (behalve in grotten en in de lucht)."""
+    grond = hoogte_op(x, z)
+    if y > grond:
+        return False                          # boven de grond = lucht
+    return not is_grot(x, y, z, grond)         # in een grot = leeg, anders gevuld
+
+
+def onthul_buren(pos):
+    """Maakt de buur-blokken aan die door het graven zichtbaar worden.
+    Zo zie je geen leegte (void) als je naar beneden graaft: de wereld
+    'groeit' steeds een laagje dieper precies waar jij graaft. Oneindig diep!"""
+    for dx, dy, dz in BUREN:
+        buur = (pos[0] + dx, pos[1] + dy, pos[2] + dz)
+        if buur not in wereld and is_gevuld_wiskundig(*buur):
+            grond = hoogte_op(buur[0], buur[2])
+            t = bepaal_blok_type(buur[1], grond)
+            wereld[buur] = t
+            cx, cz = chunk_van_pos(buur[0], buur[2])
+            chunk_blokken.setdefault((cx, cz), {})[buur] = t
 
 
 def voeg_boom_toe(blokken, x, grond, z, rng):
@@ -232,6 +264,7 @@ def breek_blok():
         wereld.pop(pos, None)
         cx, cz = chunk_van_pos(pos[0], pos[2])
         chunk_blokken.get((cx, cz), {}).pop(pos, None)
+        onthul_buren(pos)          # maak de blokken eronder/ernaast aan (geen void)
         geluid_afbreken.play()
         herbouw_rond(pos)
 
@@ -350,10 +383,16 @@ def update():
     helder = max(0.1, (hoogte + 1) / 2)
     lucht.color = color.rgb(0.5 * helder, 0.7 * helder, 1.0 * helder)
 
-    # --- Reddingslijn: niet van de wereld af vallen ---
+    # --- Reddingslijn: alleen als je ECHT in de leegte valt ---
+    # We schieten een straal recht naar beneden. Is er grond onder je? Top, dan
+    # doen we niks (zo kun je zo diep graven als je wilt). Is er niets onder je
+    # (je valt de leegte in)? Dan zetten we je weer veilig bovenop de grond.
     grond_hier = hoogte_op(speler.x, speler.z)
-    if speler.y < grond_hier - 10:
-        speler.position = (speler.x, grond_hier + 2, speler.z)
+    if speler.y < grond_hier - 3:
+        val_straal = raycast(speler.world_position, Vec3(0, -1, 0),
+                             distance=80, ignore=[speler])
+        if not val_straal.hit:
+            speler.position = (speler.x, grond_hier + 2, speler.z)
 
     # --- FPS meten ---
     if time.dt > 0:
