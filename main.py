@@ -255,7 +255,9 @@ for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
             laad_chunk(*chunk)
 
 # --- Speler ---
-speler = FirstPersonController()
+# height=2 betekent: de speler is precies 2 blokken hoog.
+# Hij past dus niet door een opening van 1 blok hoog, wel door 2 blokken.
+speler = FirstPersonController(height=2)
 speler.position = (SPAWN_X, spawn_grond, SPAWN_Z)
 
 Sky()
