@@ -9,7 +9,8 @@ app = Ursina()
 
 # --- Instellingen ---
 CHUNK_GROOTTE    = 8    # Een stukje wereld is 8x8 blokken groot
-RENDER_AFSTAND   = 2    # Hoeveel stukjes rondom de speler worden geladen (2 = 5x5 stukjes)
+RENDER_AFSTAND   = 1    # Hoeveel stukjes rondom de speler worden geladen (1 = 3x3 stukjes)
+                        # Hoger = je ziet verder, maar het spel wordt wel langzamer!
 WERELD_DIEPTE    = 4    # Hoe diep de grond gaat
 DOEL_FPS         = 50   # Hoe snel we het spel willen laten draaien (beeldjes per seconde)
 
@@ -407,6 +408,16 @@ def update():
         if chunk_hier not in geladen_chunks:
             laad_chunk(*chunk_hier)
 
+    # Zorg dat er ALTIJD een blok onder je voeten is. Soms loop je sneller dan
+    # de grond geladen is; dan maken we dat ene blok meteen, zodat je blijft staan.
+    vx, vz   = round(speler.x), round(speler.z)
+    vy       = hoogte_op(vx, vz)
+    chunk_v  = chunk_van_pos(vx, vz)
+    if chunk_v in geladen_chunks and (vx, vy, vz) not in blok_op_positie:
+        onder = Blok(positie=(vx, vy, vz), blok_type=bepaal_blok_type(vy, vy),
+                     chunk_sleutel=chunk_v)
+        geladen_chunks[chunk_v].add(onder)
+
     # --- FPS meten (doen we altijd, ook als het meet-schermpje uit staat) ---
     # FPS = beelden per seconde. time.dt is de tijd die de vorige frame duurde.
     # We mengen het nieuwe getal langzaam in het gemiddelde, zodat het rustig blijft.
@@ -475,9 +486,10 @@ def update():
             if chunk not in geladen_chunks:
                 laad_chunk(*chunk)
 
-    # Verwijder stukjes die te ver weg zijn
+    # Verwijder stukjes die te ver weg zijn. We bewaarden er vroeger een extra
+    # ring omheen; dat waren veel te veel blokken. Nu houden we alleen wat we zien.
     for chunk in list(geladen_chunks.keys()):
-        if abs(chunk[0] - cx) > RENDER_AFSTAND + 1 or abs(chunk[1] - cz) > RENDER_AFSTAND + 1:
+        if abs(chunk[0] - cx) > RENDER_AFSTAND or abs(chunk[1] - cz) > RENDER_AFSTAND:
             verwijder_chunk(*chunk)
 
 
