@@ -260,7 +260,15 @@ for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
 speler = FirstPersonController(height=2)
 speler.position = (SPAWN_X, spawn_grond, SPAWN_Z)
 
-Sky()
+# --- Dag en nacht ---
+# De lucht en de zon. De lucht verandert van kleur en de zon draait rond,
+# zodat het overdag licht is en 's nachts donker.
+lucht = Sky(color=color.rgb(0.5, 0.7, 1.0))   # de lucht (begint blauw)
+zon   = DirectionalLight()                     # de zon die de wereld verlicht
+zon.rotation = (45, -45, 0)
+
+dag_tijd   = 0.0    # telt de tijd; bepaalt hoe laat het is in het spel
+DAG_LENGTE = 60.0   # een hele dag (licht + donker) duurt 60 seconden
 
 # Zet de ingebouwde FPS-teller van Ursina aan (verschijnt rechtsboven)
 window.fps_counter.enabled = True
@@ -293,7 +301,21 @@ debug_timer = 0.0
 
 def update():
     """Wordt elke frame aangeroepen: laad blokken en beheer chunks."""
-    global vorige_chunk, gemiddelde_fps, debug_timer
+    global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd
+
+    # --- Dag en nacht laten verlopen ---
+    # time.dt is de tijd die de vorige frame duurde. Zo telt de tijd door.
+    dag_tijd += time.dt
+    fractie = (dag_tijd % DAG_LENGTE) / DAG_LENGTE   # een getal van 0 tot 1: hoe ver op de dag
+
+    # De zon draait een rondje (360 graden) in een hele dag
+    zon.rotation = (fractie * 360, -45, 0)
+
+    # hoogte = hoe hoog de zon staat. +1 = recht boven je, -1 = aan de andere kant (nacht)
+    hoogte = math.sin(fractie * 2 * math.pi)
+    helder = max(0.1, (hoogte + 1) / 2)              # overdag bijna 1, 's nachts bijna 0.1
+    # Maak de lucht lichter of donkerder door de kleur met 'helder' te vermenigvuldigen
+    lucht.color = color.rgb(0.5 * helder, 0.7 * helder, 1.0 * helder)
 
     # --- Meet-schermpje bijwerken ---
     if debug_tekst.enabled:
