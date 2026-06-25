@@ -238,6 +238,39 @@ def verwijder_chunk(cx, cz):
         verwijder_wachtrij.append(blok)
 
 
+class Varken(Entity):
+    """Een varken dat vrolijk over de wereld rondloopt."""
+
+    def __init__(self, positie):
+        super().__init__(parent=scene, position=positie)
+        roze       = color.rgb(1.0,  0.7,  0.75)
+        donkerroze = color.rgb(0.9,  0.5,  0.55)
+        # Het lichaam
+        Entity(parent=self, model='cube', color=roze, scale=(0.9, 0.7, 1.3))
+        # Het snuitje aan de voorkant
+        Entity(parent=self, model='cube', color=donkerroze,
+               position=(0, 0, 0.7), scale=(0.4, 0.4, 0.2))
+        # Vier pootjes
+        for px in (-0.3, 0.3):
+            for pz in (-0.45, 0.45):
+                Entity(parent=self, model='cube', color=donkerroze,
+                       position=(px, -0.45, pz), scale=(0.2, 0.5, 0.2))
+        self.richting   = random.uniform(0, 360)  # welke kant het varken op kijkt
+        self.loop_timer = 0                        # wanneer kiest het een nieuwe richting?
+
+    def update(self):
+        # Af en toe een nieuwe willekeurige richting kiezen
+        self.loop_timer -= time.dt
+        if self.loop_timer <= 0:
+            self.richting   = random.uniform(0, 360)
+            self.loop_timer = random.uniform(1, 3)
+        # Draai die kant op en loop een beetje vooruit
+        self.rotation_y = self.richting
+        self.position  += self.forward * time.dt * 1.5
+        # Altijd netjes op de grond blijven staan
+        self.y = hoogte_op(self.x, self.z) + 0.7
+
+
 # --- Startpositie ---
 SPAWN_X = 0
 SPAWN_Z = 0
@@ -278,6 +311,15 @@ for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
 # Hij past dus niet door een opening van 1 blok hoog, wel door 2 blokken.
 speler = FirstPersonController(height=2)
 speler.position = (SPAWN_X, spawn_grond, SPAWN_Z)
+
+# --- Dieren ---
+# Maak een paar varkens rondom de startplek
+dieren = []
+for _ in range(5):
+    dx = SPAWN_X + random.randint(-6, 6)
+    dz = SPAWN_Z + random.randint(-6, 6)
+    dg = hoogte_op(dx, dz)
+    dieren.append(Varken((dx, dg + 0.7, dz)))
 
 # --- Dag en nacht ---
 # De lucht en de zon. De lucht verandert van kleur en de zon draait rond,
