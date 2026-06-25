@@ -407,6 +407,52 @@ def kies_blok(index):
 
 kies_blok(0)   # begin met het eerste blok
 
+
+# --- Inventaris (open en sluit met de toets 'i') ---
+# Een scherm met alle blokken als vakjes. Klik op een vakje om dat blok te kiezen.
+inventaris = Entity(parent=camera.ui, enabled=False)
+# Donkere achtergrond zodat de vakjes goed opvallen
+Entity(parent=inventaris, model='quad', color=color.rgba(0, 0, 0, 0.75),
+       scale=(1.8, 1.0), z=1)
+Text(parent=inventaris, text="Kies een blok (klik erop)   -   'i' om te sluiten",
+     position=(0, 0.4), origin=(0, 0), scale=1.3)
+
+
+def verberg_inventaris():
+    """Sluit de inventaris en vergrendel de muis weer voor het rondkijken."""
+    inventaris.enabled = False
+    mouse.locked  = True
+    mouse.visible = False
+
+
+def toon_inventaris():
+    """Open de inventaris en maak de muis vrij zodat je kunt klikken."""
+    inventaris.enabled = True
+    mouse.locked  = False
+    mouse.visible = True
+
+
+def kies_uit_inventaris(index):
+    """Wordt aangeroepen als je op een blok-vakje klikt."""
+    kies_blok(index)
+    verberg_inventaris()
+
+
+# Maak voor elk blok een gekleurd vakje in een net rooster (7 op een rij)
+KOLOMMEN = 7
+for i, naam in enumerate(BLOK_KEUZES):
+    rij = i // KOLOMMEN
+    kol = i % KOLOMMEN
+    vx  = (kol - (KOLOMMEN - 1) / 2) * 0.2
+    vy  = 0.2 - rij * 0.22
+    kleur = KLEUREN[naam]
+    vakje = Button(parent=inventaris, model='quad', scale=0.16, position=(vx, vy),
+                   color=color.rgb(kleur.r, kleur.g, kleur.b))
+    vakje.on_click = Func(kies_uit_inventaris, i)   # klik = dit blok kiezen
+    Text(parent=inventaris, text=naam, position=(vx, vy - 0.1),
+         origin=(0, 0), scale=0.7)
+
+
 # --- Meet-schermpje (linksonder) ---
 debug_tekst = Text(text="", position=(-0.85, -0.30), scale=1.1, background=True)
 gemiddelde_fps = 50.0
@@ -481,8 +527,15 @@ def update():
 
 
 def input(toets):
-    if toets == 'left mouse down':  breek_blok()
-    if toets == 'right mouse down': plaats_blok()
+    # De inventaris openen of sluiten
+    if toets == 'i':
+        verberg_inventaris() if inventaris.enabled else toon_inventaris()
+        return
+
+    # Als de inventaris open is, niet breken/plaatsen (je klikt dan op vakjes)
+    if not inventaris.enabled:
+        if toets == 'left mouse down':  breek_blok()
+        if toets == 'right mouse down': plaats_blok()
 
     # Met het muiswiel door alle blokken bladeren
     if toets == 'scroll up':   kies_blok(blok_index + 1)
