@@ -64,6 +64,13 @@ def chunk_van_pos(x, z):
     return (math.floor(x / CHUNK_GROOTTE), math.floor(z / CHUNK_GROOTTE))
 
 
+# --- Geluiden ---
+# We laden de twee geluidjes uit de map 'assets'.
+# autoplay=False betekent: niet meteen afspelen, maar pas als wij dat zeggen.
+geluid_plaatsen = Audio('plop',  autoplay=False)   # plop bij plaatsen
+geluid_afbreken = Audio('boink', autoplay=False)   # boink bij afbreken
+
+
 class Blok(Button):
     """Een enkel blok in de wereld."""
 
@@ -87,6 +94,7 @@ class Blok(Button):
         if self.hovered:
             if toets == 'left mouse down':
                 # Blok afbreken
+                geluid_afbreken.play()   # boink!
                 if self.chunk_sleutel in geladen_chunks:
                     geladen_chunks[self.chunk_sleutel].discard(self)
                 sleutel = positie_sleutel(self.position)
@@ -105,6 +113,7 @@ class Blok(Button):
                 nieuw = Blok(positie=nieuwe_pos, blok_type=huidig_blok, chunk_sleutel=nieuwe_chunk)
                 if nieuwe_chunk in geladen_chunks:
                     geladen_chunks[nieuwe_chunk].add(nieuw)
+                geluid_plaatsen.play()   # plop!
 
 
 def hoogte_op(x, z):
