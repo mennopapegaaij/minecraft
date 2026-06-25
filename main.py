@@ -396,6 +396,17 @@ def update():
     # Maak de lucht lichter of donkerder door de kleur met 'helder' te vermenigvuldigen
     lucht.color = color.rgb(0.5 * helder, 0.7 * helder, 1.0 * helder)
 
+    # --- Reddingslijn: niet van de wereld af vallen ---
+    # Soms ben je sneller dan dat de grond geladen is, en val je door een gat.
+    # Als je heel diep onder de grond zakt, zetten we je weer veilig bovenop
+    # de grond op jouw plek, en zorgen we dat dat stukje wereld geladen wordt.
+    grond_hier = hoogte_op(speler.x, speler.z)
+    if speler.y < grond_hier - 10:
+        speler.position = (speler.x, grond_hier + 2, speler.z)
+        chunk_hier = chunk_van_pos(speler.x, speler.z)
+        if chunk_hier not in geladen_chunks:
+            laad_chunk(*chunk_hier)
+
     # --- FPS meten (doen we altijd, ook als het meet-schermpje uit staat) ---
     # FPS = beelden per seconde. time.dt is de tijd die de vorige frame duurde.
     # We mengen het nieuwe getal langzaam in het gemiddelde, zodat het rustig blijft.
@@ -403,14 +414,14 @@ def update():
         huidige_fps    = 1 / time.dt
         gemiddelde_fps = gemiddelde_fps * 0.95 + huidige_fps * 0.05
 
-    # --- Cruise control: hoeveel werk doen we deze frame? ---
-    # Loopt het spel te traag? Dan doen we wat minder per frame (rustiger aan).
-    # Is er ruimte over? Dan doen we wat meer, zodat de wereld snel laadt.
+    # --- Cruise control: hoeveel NIEUWE blokken maken we deze frame? ---
+    # Nieuwe blokken maken is het zware werk. Loopt het spel te traag?
+    # Dan maken we er minder. Is er ruimte over? Dan maken we er wat meer.
     if gemiddelde_fps < DOEL_FPS - 2:
-        werk_per_frame = max(2.0, werk_per_frame - 1.0)     # rem af
+        werk_per_frame = max(2.0, werk_per_frame - 2.0)     # rem af
     else:
-        werk_per_frame = min(300.0, werk_per_frame + 0.5)   # geef wat gas
-    aantal = int(werk_per_frame)
+        werk_per_frame = min(60.0, werk_per_frame + 0.5)    # geef wat gas
+    laad_aantal = int(werk_per_frame)
 
     # --- Meet-schermpje bijwerken ---
     if debug_tekst.enabled:
@@ -425,20 +436,21 @@ def update():
                 f"Blokken in wereld: {aantal_blokken}\n"
                 f"Laad-wachtrij: {len(laad_wachtrij)}\n"
                 f"Verwijder-wachtrij: {len(verwijder_wachtrij)}\n"
-                f"Werk per frame: {aantal}\n"
+                f"Nieuwe blokken per frame: {laad_aantal}\n"
                 f"Chunk: {speler_chunk}"
             )
 
-    # Verwijder een paar blokken per frame (geleidelijk, geen haperingen)
-    for _ in range(aantal):
+    # Oude blokken opruimen maakt het spel juist SNELLER, dus dat doen we
+    # altijd flink door (nooit afremmen). Anders blijven er te veel blokken staan.
+    for _ in range(80):
         if not verwijder_wachtrij:
             break
         blok = verwijder_wachtrij.popleft()
         blok_op_positie.pop(positie_sleutel(blok.position), None)  # Uit telefoonboek
         destroy(blok)
 
-    # Maak een paar blokken aan uit de laadwachtrij
-    for _ in range(aantal):
+    # Nieuwe blokken maken uit de laadwachtrij (dit remt de cruise control wel af)
+    for _ in range(laad_aantal):
         if not laad_wachtrij:
             break
         positie, blok_type, sleutel = laad_wachtrij.popleft()
