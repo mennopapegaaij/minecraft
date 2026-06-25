@@ -11,8 +11,14 @@ app = Ursina()
 CHUNK_GROOTTE    = 8    # Een stukje wereld is 8x8 blokken groot
 RENDER_AFSTAND   = 2    # Hoeveel stukjes rondom de speler worden geladen (2 = 5x5 stukjes)
 WERELD_DIEPTE    = 4    # Hoe diep de grond gaat
-BLOKKEN_FRAME    = 20   # Blokken per frame aanmaken
-VERWIJDER_FRAME  = 20   # Blokken per frame verwijderen
+DOEL_FPS         = 50   # Hoe snel we het spel willen laten draaien (beeldjes per seconde)
+
+# Het spel mag niet sneller gaan dan DOEL_FPS (een soort maximumsnelheid).
+# Zo schiet het niet onnodig naar 150 FPS en weer terug, maar blijft het rustig.
+from panda3d.core import ClockObject
+spel_klok = ClockObject.getGlobalClock()
+spel_klok.setMode(ClockObject.MLimited)
+spel_klok.setFrameRate(DOEL_FPS)
 
 # Willekeurig zaad: elke keer een andere wereld!
 WERELD_ZAAD = random.randint(1, 9999)
@@ -364,14 +370,17 @@ debug_tekst = Text(
 )
 
 # Een rustig gemiddelde van de FPS, zodat het getal niet zo wild springt
-gemiddelde_fps = 60.0
+gemiddelde_fps = 50.0
 # Kleine timer: we werken de tekst maar een paar keer per seconde bij
 debug_timer = 0.0
+# Hoeveel blokken we per frame laden/verwijderen. Dit getal past zich vanzelf
+# aan (de 'cruise control'): omlaag als het spel hapert, omhoog als er ruimte is.
+werk_per_frame = 20.0
 
 
 def update():
     """Wordt elke frame aangeroepen: laad blokken en beheer chunks."""
-    global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd
+    global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd, werk_per_frame
 
     # --- Dag en nacht laten verlopen ---
     # time.dt is de tijd die de vorige frame duurde. Zo telt de tijd door.
@@ -387,14 +396,24 @@ def update():
     # Maak de lucht lichter of donkerder door de kleur met 'helder' te vermenigvuldigen
     lucht.color = color.rgb(0.5 * helder, 0.7 * helder, 1.0 * helder)
 
+    # --- FPS meten (doen we altijd, ook als het meet-schermpje uit staat) ---
+    # FPS = beelden per seconde. time.dt is de tijd die de vorige frame duurde.
+    # We mengen het nieuwe getal langzaam in het gemiddelde, zodat het rustig blijft.
+    if time.dt > 0:
+        huidige_fps    = 1 / time.dt
+        gemiddelde_fps = gemiddelde_fps * 0.95 + huidige_fps * 0.05
+
+    # --- Cruise control: hoeveel werk doen we deze frame? ---
+    # Loopt het spel te traag? Dan doen we wat minder per frame (rustiger aan).
+    # Is er ruimte over? Dan doen we wat meer, zodat de wereld snel laadt.
+    if gemiddelde_fps < DOEL_FPS - 2:
+        werk_per_frame = max(2.0, werk_per_frame - 1.0)     # rem af
+    else:
+        werk_per_frame = min(300.0, werk_per_frame + 0.5)   # geef wat gas
+    aantal = int(werk_per_frame)
+
     # --- Meet-schermpje bijwerken ---
     if debug_tekst.enabled:
-        # FPS = beelden per seconde. time.dt is de tijd die de vorige frame duurde.
-        # We mengen het nieuwe getal langzaam in het gemiddelde, zodat het rustig blijft.
-        if time.dt > 0:
-            huidige_fps    = 1 / time.dt
-            gemiddelde_fps = gemiddelde_fps * 0.95 + huidige_fps * 0.05
-
         # Werk de tekst maar ~4 keer per seconde bij (niet elke frame)
         debug_timer += time.dt
         if debug_timer >= 0.25:
@@ -406,11 +425,12 @@ def update():
                 f"Blokken in wereld: {aantal_blokken}\n"
                 f"Laad-wachtrij: {len(laad_wachtrij)}\n"
                 f"Verwijder-wachtrij: {len(verwijder_wachtrij)}\n"
+                f"Werk per frame: {aantal}\n"
                 f"Chunk: {speler_chunk}"
             )
 
     # Verwijder een paar blokken per frame (geleidelijk, geen haperingen)
-    for _ in range(VERWIJDER_FRAME):
+    for _ in range(aantal):
         if not verwijder_wachtrij:
             break
         blok = verwijder_wachtrij.popleft()
@@ -418,7 +438,7 @@ def update():
         destroy(blok)
 
     # Maak een paar blokken aan uit de laadwachtrij
-    for _ in range(BLOKKEN_FRAME):
+    for _ in range(aantal):
         if not laad_wachtrij:
             break
         positie, blok_type, sleutel = laad_wachtrij.popleft()
