@@ -35,18 +35,39 @@ ruis_klein  = PerlinNoise(octaves=12, seed=WERELD_ZAAD + 2)
 
 # --- Kleuren van de blokken (waarden van 0 tot 1!) ---
 KLEUREN = {
-    'gras':   color.rgb(106/255, 170/255,  60/255),
-    'aarde':  color.rgb(134/255,  96/255,  67/255),
-    'steen':  color.rgb(128/255, 128/255, 128/255),
-    'hout':   color.rgb(101/255,  67/255,  33/255),
-    'blad':   color.rgb( 34/255, 120/255,  34/255),
-    'zand':   color.rgb(210/255, 190/255, 140/255),
-    'sneeuw': color.rgb(230/255, 230/255, 250/255),
-    'water':  color.rgba(45/255, 110/255, 200/255, 0.6),
+    'gras':     color.rgb(106/255, 170/255,  60/255),
+    'aarde':    color.rgb(134/255,  96/255,  67/255),
+    'steen':    color.rgb(128/255, 128/255, 128/255),
+    'hout':     color.rgb(101/255,  67/255,  33/255),
+    'planken':  color.rgb(160/255, 120/255,  70/255),
+    'blad':     color.rgb( 34/255, 120/255,  34/255),
+    'zand':     color.rgb(210/255, 190/255, 140/255),
+    'sneeuw':   color.rgb(235/255, 235/255, 250/255),
+    'baksteen': color.rgb(150/255,  60/255,  50/255),
+    'glas':     color.rgba(200/255, 230/255, 255/255, 0.4),
+    'goud':     color.rgb(250/255, 215/255,  60/255),
+    'diamant':  color.rgb(110/255, 230/255, 230/255),
+    'ijzer':    color.rgb(200/255, 200/255, 205/255),
+    'smaragd':  color.rgb( 40/255, 200/255, 100/255),
+    'robijn':   color.rgb(220/255,  40/255,  60/255),
+    'kool':     color.rgb( 45/255,  45/255,  45/255),
+    'lava':     color.rgb(240/255, 100/255,  20/255),
+    'pompoen':  color.rgb(230/255, 140/255,  30/255),
+    'mos':      color.rgb( 60/255, 110/255,  40/255),
+    'paars':    color.rgb(140/255,  60/255, 200/255),
+    'roze':     color.rgb(240/255, 140/255, 200/255),
+    'water':    color.rgba(45/255, 110/255, 200/255, 0.6),
 }
 
+# De blokken die je kunt vasthouden en plaatsen (met muiswiel of cijfertoetsen)
+BLOK_KEUZES = ['gras', 'aarde', 'steen', 'zand', 'hout', 'planken', 'blad',
+               'baksteen', 'glas', 'sneeuw', 'goud', 'diamant', 'ijzer',
+               'smaragd', 'robijn', 'kool', 'lava', 'pompoen', 'mos',
+               'paars', 'roze']
+
 WATER_NIVEAU = 6          # Tot welke hoogte staat er water in de lage plekken
-huidig_blok  = 'gras'     # Welk blok de speler in de hand heeft
+blok_index   = 0          # Welk blok uit de lijst je vasthoudt
+huidig_blok  = BLOK_KEUZES[blok_index]
 
 # --- Het geheugen van de wereld ---
 # 'wereld' is het grote telefoonboek: op welke plek (x, y, z) staat welk soort blok?
@@ -363,13 +384,28 @@ window.fps_counter.enabled = True
 
 # --- Uitleg op het scherm ---
 Text(
-    text="[1] Gras  [2] Aarde  [3] Steen  [4] Hout  [5] Blad  [6] Zand  [7] Sneeuw\n"
-         "Linker muis = afbreken   Rechter muis = plaatsen\n"
-         "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje aan/uit",
+    text="Linker muis = afbreken   Rechter muis = plaatsen   Muiswiel = ander blok\n"
+         "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje",
     position=(-0.85, 0.47),
     scale=1.1,
     background=True,
 )
+
+# --- Blok-kiezer onderaan: laat zien welk blok je vasthoudt ---
+blok_tekst = Text(text="", position=(-0.15, -0.42), scale=1.3, background=True)
+
+
+def kies_blok(index):
+    """Kiest een blok uit de lijst en laat de naam onderaan zien."""
+    global blok_index, huidig_blok
+    blok_index  = index % len(BLOK_KEUZES)   # blijf netjes binnen de lijst
+    huidig_blok = BLOK_KEUZES[blok_index]
+    blok_tekst.text = f"Blok: {huidig_blok.upper()}  ({blok_index + 1}/{len(BLOK_KEUZES)})"
+    k = KLEUREN.get(huidig_blok, color.white)
+    blok_tekst.color = color.rgb(k.r, k.g, k.b)   # zelfde kleur, maar altijd goed zichtbaar
+
+
+kies_blok(0)   # begin met het eerste blok
 
 # --- Meet-schermpje (linksonder) ---
 debug_tekst = Text(text="", position=(-0.85, -0.30), scale=1.1, background=True)
@@ -445,16 +481,19 @@ def update():
 
 
 def input(toets):
-    global huidig_blok
     if toets == 'left mouse down':  breek_blok()
     if toets == 'right mouse down': plaats_blok()
-    if toets == '1': huidig_blok = 'gras';   print("Je hebt nu: GRAS")
-    if toets == '2': huidig_blok = 'aarde';  print("Je hebt nu: AARDE")
-    if toets == '3': huidig_blok = 'steen';  print("Je hebt nu: STEEN")
-    if toets == '4': huidig_blok = 'hout';   print("Je hebt nu: HOUT")
-    if toets == '5': huidig_blok = 'blad';   print("Je hebt nu: BLAD")
-    if toets == '6': huidig_blok = 'zand';   print("Je hebt nu: ZAND")
-    if toets == '7': huidig_blok = 'sneeuw'; print("Je hebt nu: SNEEUW")
+
+    # Met het muiswiel door alle blokken bladeren
+    if toets == 'scroll up':   kies_blok(blok_index + 1)
+    if toets == 'scroll down': kies_blok(blok_index - 1)
+
+    # De cijfertoetsen 1 t/m 9 en 0 kiezen snel de eerste tien blokken
+    if len(toets) == 1 and toets in '1234567890':
+        nummer = 9 if toets == '0' else int(toets) - 1   # '1'->0, ..., '0'->9
+        if nummer < len(BLOK_KEUZES):
+            kies_blok(nummer)
+
     if toets == 'f3':
         debug_tekst.enabled        = not debug_tekst.enabled
         window.fps_counter.enabled = debug_tekst.enabled
