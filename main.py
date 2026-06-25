@@ -32,7 +32,13 @@ KLEUREN = {
     'blad':   color.rgb( 34/255, 120/255,  34/255),
     'zand':   color.rgb(210/255, 190/255, 140/255),
     'sneeuw': color.rgb(230/255, 230/255, 250/255),
+    # Water heeft een vierde getal (0.6): dat is de doorzichtigheid.
+    # 1 = helemaal dicht, 0 = onzichtbaar. 0.6 = je kunt er een beetje doorheen kijken.
+    'water':  color.rgba(45/255, 110/255, 200/255, 0.6),
 }
+
+# Tot welke hoogte staat er water in de lage plekken
+WATER_NIVEAU = 6
 
 # Welk blok de speler in de hand heeft
 huidig_blok = 'gras'
@@ -181,6 +187,12 @@ def voeg_boom_toe(x, grond, z, sleutel, rng):
                         laad_wachtrij.append(((x + bx, top + by, z + bz), 'blad', sleutel))
 
 
+def voeg_water_toe(x, grond, z, sleutel):
+    """Vult de lucht boven een lage plek met water, tot aan het waterniveau."""
+    for y in range(grond + 1, WATER_NIVEAU + 1):
+        laad_wachtrij.append(((x, y, z), 'water', sleutel))
+
+
 def laad_chunk(cx, cz):
     """Voegt alle blokken van een stukje wereld toe aan de laadwachtrij."""
     if (cx, cz) in geladen_chunks:
@@ -203,6 +215,10 @@ def laad_chunk(cx, cz):
             for y in range(grond_hoogte - 1, grond_hoogte - WERELD_DIEPTE, -1):
                 if not is_grot(x, y, z, grond_hoogte) and is_zichtbaar(x, y, z):
                     laad_wachtrij.append(((x, y, z), bepaal_blok_type(y, grond_hoogte), sleutel))
+
+            # Water in de lage plekken
+            if grond_hoogte < WATER_NIVEAU:
+                voeg_water_toe(x, grond_hoogte, z, sleutel)
 
             # Soms een boom (niet op de startpositie)
             is_startplek = (cx == 0 and cz == 0 and x == 0 and z == 0)
@@ -242,6 +258,9 @@ for sx in range(start_chunk[0] * CHUNK_GROOTTE, (start_chunk[0] + 1) * CHUNK_GRO
         for y in range(gh - 1, gh - WERELD_DIEPTE, -1):
             if not is_grot(sx, y, sz, gh) and is_zichtbaar(sx, y, sz):
                 laad_wachtrij.append(((sx, y, sz), bepaal_blok_type(y, gh), start_chunk))
+        # Water in de lage plekken
+        if gh < WATER_NIVEAU:
+            voeg_water_toe(sx, gh, sz, start_chunk)
         # Bomen (niet op startplek)
         if not (sx == SPAWN_X and sz == SPAWN_Z) and bt == 'gras' and start_rng.random() < 0.05:
             if abs(gh - hoogte_op(sx - 1, sz)) <= 1 and abs(gh - hoogte_op(sx + 1, sz)) <= 1:
