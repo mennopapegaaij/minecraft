@@ -55,6 +55,7 @@ wereld          = {}                    # (x, y, z) -> bloktype, bv 'gras'
 chunk_blokken   = {}                    # (cx, cz) -> dict met de blokken van dat stukje
 chunk_modellen  = {}                    # (cx, cz) -> lijst met de samengeplakte 3D-modellen
 bouw_wachtrij   = collections.deque()   # stukjes die nog een 3D-model moeten krijgen
+weggehaald      = set()                 # plekken waar de speler een blok heeft weggesloopt
 vorige_chunk    = None
 
 
@@ -133,6 +134,9 @@ def onthul_buren(pos):
     'groeit' steeds een laagje dieper precies waar jij graaft. Oneindig diep!"""
     for dx, dy, dz in BUREN:
         buur = (pos[0] + dx, pos[1] + dy, pos[2] + dz)
+        # Niet terugzetten: blokken die de speler zelf heeft weggesloopt
+        if buur in weggehaald:
+            continue
         if buur not in wereld and is_gevuld_wiskundig(*buur):
             grond = hoogte_op(buur[0], buur[2])
             t = bepaal_blok_type(buur[1], grond)
@@ -264,6 +268,7 @@ def breek_blok():
         wereld.pop(pos, None)
         cx, cz = chunk_van_pos(pos[0], pos[2])
         chunk_blokken.get((cx, cz), {}).pop(pos, None)
+        weggehaald.add(pos)        # onthoud dat dit blok weg is (komt niet terug)
         onthul_buren(pos)          # maak de blokken eronder/ernaast aan (geen void)
         geluid_afbreken.play()
         herbouw_rond(pos)
@@ -281,6 +286,7 @@ def plaats_blok():
     wereld[pos] = huidig_blok
     cx, cz = chunk_van_pos(pos[0], pos[2])
     chunk_blokken.setdefault((cx, cz), {})[pos] = huidig_blok
+    weggehaald.discard(pos)    # hier staat weer een blok, dus niet meer 'weg'
     geluid_plaatsen.play()
     herbouw_rond(pos)
 
