@@ -68,8 +68,8 @@ BLOK_KEUZES = ['gras', 'aarde', 'steen', 'zand', 'hout', 'planken', 'blad',
 WATER_NIVEAU = 6          # Tot welke hoogte staat er water in de lage plekken
 
 # --- Rugzak: hoeveel je van elk blok of zelfgemaakt ding hebt ---
-# We beginnen met een beetje hout en steen, zodat je meteen kunt bouwen en maken.
-rugzak = {'hout': 10, 'steen': 10}
+# Je begint met NIETS. Ga eerst blokken slopen om spullen te verzamelen!
+rugzak = {}
 
 # Het blok of ding dat je nu vasthoudt om te plaatsen (None = niks)
 vastgehouden = None
@@ -446,31 +446,150 @@ geluid_plaatsen = Audio('plop',  autoplay=False)   # plop bij plaatsen
 geluid_afbreken = Audio('boink', autoplay=False)   # boink bij afbreken
 
 
-class Varken(Entity):
-    """Een varken dat vrolijk over de wereld rondloopt."""
+class Levend(Entity):
+    """De basis voor alle dieren en monsters. Ze blijven op de grond staan
+    en je kunt ze slaan (ze hebben levens en gaan dood bij 0)."""
 
-    def __init__(self, positie):
+    def __init__(self, positie, levens, lijst):
         super().__init__(parent=scene, position=positie)
-        roze       = color.rgb(1.0,  0.7,  0.75)
-        donkerroze = color.rgb(0.9,  0.5,  0.55)
-        Entity(parent=self, model='cube', color=roze, scale=(0.9, 0.7, 1.3))            # lichaam
-        Entity(parent=self, model='cube', color=donkerroze,
-               position=(0, 0, 0.7), scale=(0.4, 0.4, 0.2))                             # snuit
-        for px in (-0.3, 0.3):                                                          # 4 pootjes
-            for pz in (-0.45, 0.45):
-                Entity(parent=self, model='cube', color=donkerroze,
-                       position=(px, -0.45, pz), scale=(0.2, 0.5, 0.2))
+        self.levens     = levens
+        self.lijst      = lijst       # de lijst waar dit wezen in staat
+        self.snelheid   = 1.5
         self.richting   = random.uniform(0, 360)
         self.loop_timer = 0
+        self.delen      = []          # de zichtbare blokjes (om rood te flitsen)
+        # Een onzichtbare 'box' eromheen, zodat je het kunt aanklikken en slaan
+        self.collider   = BoxCollider(self, center=Vec3(0, 0.3, 0),
+                                      size=Vec3(1, 1.8, 1.4))
+
+    def maak_deel(self, **kw):
+        """Maakt een blokje (lichaamsdeel) en onthoudt het voor de rode flits."""
+        deel = Entity(parent=self, model='cube', **kw)
+        self.delen.append(deel)
+        return deel
+
+    def raak(self, schade=1):
+        """Wordt aangeroepen als je het wezen slaat."""
+        self.levens -= schade
+        for deel in self.delen:
+            deel.blink(color.red, duration=0.2)   # even rood knipperen: au!
+        if self.levens <= 0:
+            self.ga_dood()
+
+    def ga_dood(self):
+        if self in self.lijst:
+            self.lijst.remove(self)
+        destroy(self)
+
+    def op_de_grond(self, hoogte):
+        """Houd het wezen netjes op de grond."""
+        self.y = hoogte_op(self.x, self.z) + hoogte
+
+
+class Dier(Levend):
+    """Een vreedzaam dier dat rustig rondloopt. Je kunt het slaan."""
+
+    def __init__(self, positie):
+        super().__init__(positie, levens=2, lijst=dieren)
 
     def update(self):
         self.loop_timer -= time.dt
-        if self.loop_timer <= 0:
+        if self.loop_timer <= 0:                     # af en toe een nieuwe kant op
             self.richting   = random.uniform(0, 360)
             self.loop_timer = random.uniform(1, 3)
         self.rotation_y = self.richting
-        self.position  += self.forward * time.dt * 1.5
-        self.y = hoogte_op(self.x, self.z) + 1.2   # netjes op de grond blijven
+        self.position  += self.forward * time.dt * self.snelheid
+        self.op_de_grond(1.2)
+
+
+class Varken(Dier):
+    """Een roze varken."""
+
+    def __init__(self, positie):
+        super().__init__(positie)
+        roze       = color.rgb(1.0, 0.7, 0.75)
+        donkerroze = color.rgb(0.9, 0.5, 0.55)
+        self.maak_deel(color=roze, scale=(0.9, 0.7, 1.3))                       # lichaam
+        self.maak_deel(color=donkerroze, position=(0, 0, 0.7), scale=(0.4, 0.4, 0.2))  # snuit
+        for px in (-0.3, 0.3):
+            for pz in (-0.45, 0.45):
+                self.maak_deel(color=donkerroze, position=(px, -0.45, pz),
+                               scale=(0.2, 0.5, 0.2))                           # pootjes
+
+
+class Koe(Dier):
+    """Een zwart-witte koe."""
+
+    def __init__(self, positie):
+        super().__init__(positie)
+        wit    = color.rgb(0.95, 0.95, 0.95)
+        zwart  = color.rgb(0.15, 0.15, 0.15)
+        self.maak_deel(color=wit, scale=(1.0, 0.9, 1.5))                        # lichaam
+        self.maak_deel(color=zwart, position=(0.3, 0.2, 0.3), scale=(0.4, 0.4, 0.4))  # vlek
+        self.maak_deel(color=wit, position=(0, 0.2, 0.85), scale=(0.5, 0.5, 0.4))     # kop
+        for px in (-0.35, 0.35):
+            for pz in (-0.55, 0.55):
+                self.maak_deel(color=wit, position=(px, -0.6, pz),
+                               scale=(0.22, 0.6, 0.22))                         # pootjes
+
+
+class Schaap(Dier):
+    """Een wollig schaap."""
+
+    def __init__(self, positie):
+        super().__init__(positie)
+        wol  = color.rgb(0.95, 0.95, 0.9)
+        kop  = color.rgb(0.2, 0.2, 0.2)
+        self.maak_deel(color=wol, scale=(0.9, 0.9, 1.2))                        # wollig lijf
+        self.maak_deel(color=kop, position=(0, 0.1, 0.7), scale=(0.4, 0.4, 0.4))  # kop
+        for px in (-0.3, 0.3):
+            for pz in (-0.4, 0.4):
+                self.maak_deel(color=kop, position=(px, -0.6, pz),
+                               scale=(0.18, 0.6, 0.18))                         # pootjes
+
+
+class Monster(Levend):
+    """Een boos monster dat naar je toe loopt en je aanvalt. Sla het terug!"""
+
+    def __init__(self, positie):
+        super().__init__(positie, levens=3, lijst=monsters)
+        self.snelheid    = 1.9
+        self.sla_cooldown = 0
+        groen  = color.rgb(0.2, 0.5, 0.2)
+        donker = color.rgb(0.1, 0.3, 0.1)
+        self.maak_deel(color=groen,  position=(0, 0.1, 0),  scale=(0.8, 1.2, 0.5))   # lijf
+        self.maak_deel(color=donker, position=(0, 0.95, 0), scale=(0.6, 0.6, 0.6))   # kop
+        for ex in (-0.13, 0.13):                                                     # rode ogen
+            self.maak_deel(color=color.red, position=(ex, 1.0, 0.28),
+                           scale=(0.12, 0.12, 0.1))
+        for px in (-0.22, 0.22):
+            self.maak_deel(color=donker, position=(px, -0.6, 0), scale=(0.25, 0.7, 0.3))  # benen
+
+    def update(self):
+        # Reken uit welke kant de speler op is (alleen plat, niet omhoog/omlaag)
+        naar = speler.world_position - self.world_position
+        plat = Vec3(naar.x, 0, naar.z)
+        afstand = plat.length()
+        if afstand > 0.1:
+            self.look_at(Vec3(speler.x, self.y, speler.z))   # kijk naar de speler
+            if afstand > 1.3:                                # loop ernaartoe
+                self.position += self.forward * time.dt * self.snelheid
+        self.op_de_grond(1.0)
+        # Sta je vlakbij? Dan slaat het monster jou (maar niet te vaak achter elkaar)
+        self.sla_cooldown -= time.dt
+        if afstand < 1.7 and self.sla_cooldown <= 0:
+            self.sla_cooldown = 1.0
+            doe_schade(1)
+
+
+def linker_klik():
+    """Linkermuis: sla een dier/monster waar je naar kijkt, anders sloop een blok."""
+    doel = mouse.hovered_entity
+    if isinstance(doel, Levend):
+        if (doel.world_position - speler.world_position).length() < 5:
+            doel.raak(1)
+        return
+    breek_blok()
 
 
 # --- Startpositie ---
@@ -495,12 +614,22 @@ for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
 speler = FirstPersonController(height=2)
 speler.position = (SPAWN_X, spawn_grond + 2, SPAWN_Z)
 
-# --- Dieren ---
+# --- Dieren (vreedzaam: varkens, koeien en schapen) ---
 dieren = []
-for _ in range(5):
-    dx = SPAWN_X + random.randint(-6, 6)
-    dz = SPAWN_Z + random.randint(-6, 6)
-    dieren.append(Varken((dx, hoogte_op(dx, dz) + 1.2, dz)))
+DIER_SOORTEN = [Varken, Koe, Schaap]
+for _ in range(10):
+    dx = SPAWN_X + random.randint(-15, 15)
+    dz = SPAWN_Z + random.randint(-15, 15)
+    soort = random.choice(DIER_SOORTEN)        # kies willekeurig een diersoort
+    dieren.append(soort((dx, hoogte_op(dx, dz) + 1.2, dz)))
+
+# --- Monsters (gevaarlijk: ze lopen naar je toe en vallen aan) ---
+monsters = []
+MAX_MONSTERS = 6          # zoveel monsters mogen er tegelijk zijn
+for _ in range(3):
+    mx = SPAWN_X + random.randint(-25, 25)
+    mz = SPAWN_Z + random.randint(-25, 25)
+    monsters.append(Monster((mx, hoogte_op(mx, mz) + 1.0, mz)))
 
 # --- Dag en nacht ---
 lucht = Sky(color=color.rgb(0.5, 0.7, 1.0))
@@ -513,7 +642,8 @@ window.fps_counter.enabled = True
 
 # --- Uitleg op het scherm ---
 Text(
-    text="Linker muis = slopen (verzamelen)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
+    text="Linker muis = slopen / slaan   Rechter muis = plaatsen   Muiswiel = ander blok\n"
+         "Pas op voor monsters! Sla ze met de linkermuis. Hartjes bovenaan = je levens.\n"
          "C = maak-tafel   F = deur open/dicht\n"
          "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje",
     position=(-0.85, 0.47),
@@ -592,6 +722,41 @@ def blader(stap):
 
 
 werk_hud_bij()   # laat meteen je begin-rugzak zien
+
+
+# --- Hartjes: jouw levens, bovenaan in beeld ---
+MAX_HP    = 10
+speler_hp = MAX_HP
+hartjes   = []
+for i in range(MAX_HP):
+    # Een klein rood vierkantje per hartje, op een rijtje bovenaan
+    hart = Entity(parent=camera.ui, model='quad', color=color.red,
+                  scale=0.035, position=(-0.2 + i * 0.045, 0.43), rotation_z=45)
+    hartjes.append(hart)
+
+
+def werk_hartjes_bij():
+    """Kleurt de hartjes: rood als je het nog hebt, grijs als het op is."""
+    for i, hart in enumerate(hartjes):
+        hart.color = color.red if i < speler_hp else color.rgb(0.25, 0.25, 0.25)
+
+
+def doe_schade(n):
+    """Haalt n hartjes van je af. Bij 0 hartjes begin je opnieuw."""
+    global speler_hp
+    speler_hp = max(0, speler_hp - n)
+    werk_hartjes_bij()
+    if speler_hp <= 0:
+        respawn()
+
+
+def respawn():
+    """Zet je weer veilig op de startplek met volle hartjes."""
+    global speler_hp
+    toon_melding("Au! Je bent verslagen! Je begint opnieuw bovenaan.")
+    speler.position = (SPAWN_X, hoogte_op(SPAWN_X, SPAWN_Z) + 2, SPAWN_Z)
+    speler_hp = MAX_HP
+    werk_hartjes_bij()
 
 
 # --- Maak-tafel (open en sluit met de toets 'c') ---
@@ -686,11 +851,22 @@ def toggle_deur():
 debug_tekst = Text(text="", position=(-0.85, -0.30), scale=1.1, background=True)
 gemiddelde_fps = 50.0
 debug_timer    = 0.0
+monster_timer  = 0.0      # om af en toe een nieuw monster te laten verschijnen
 
 
 def update():
     """Wordt elke frame aangeroepen: dag/nacht, bouwen en stukjes beheren."""
-    global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd
+    global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd, monster_timer
+
+    # --- Af en toe een nieuw monster laten verschijnen (niet te dichtbij) ---
+    monster_timer += time.dt
+    if monster_timer > 5 and len(monsters) < MAX_MONSTERS:
+        monster_timer = 0.0
+        hoek = random.uniform(0, 2 * math.pi)
+        afst = random.uniform(18, 28)
+        mx = speler.x + math.cos(hoek) * afst
+        mz = speler.z + math.sin(hoek) * afst
+        monsters.append(Monster((mx, hoogte_op(mx, mz) + 1.0, mz)))
 
     # --- Dag en nacht laten verlopen ---
     dag_tijd += time.dt
@@ -775,7 +951,7 @@ def input(toets):
 
     # Alleen breken/plaatsen/deur als de maak-tafel dicht is
     if not maaktafel.enabled:
-        if toets == 'left mouse down':  breek_blok()
+        if toets == 'left mouse down':  linker_klik()
         if toets == 'right mouse down': plaats_blok()
         if toets == 'f':                toggle_deur()
 
