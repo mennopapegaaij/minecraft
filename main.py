@@ -66,18 +66,13 @@ BLOK_KEUZES = ['gras', 'aarde', 'steen', 'zand', 'hout', 'planken', 'blad',
                'paars', 'roze']
 
 WATER_NIVEAU = 6          # Tot welke hoogte staat er water in de lage plekken
-blok_index   = 0          # Welk blok uit de lijst je vasthoudt
-huidig_blok  = BLOK_KEUZES[blok_index]
 
 # --- Rugzak: hoeveel je van elk blok of zelfgemaakt ding hebt ---
-# We beginnen met een beetje hout en steen, zodat je meteen kunt maken.
+# We beginnen met een beetje hout en steen, zodat je meteen kunt bouwen en maken.
 rugzak = {'hout': 10, 'steen': 10}
 
-# Wat je nu vasthoudt om te plaatsen:
-#   vast_soort 'blok' -> een gewoon blok (huidig_blok), vrij te plaatsen
-#   vast_soort 'item' -> een zelfgemaakt ding (vast_item), kost 1 uit je rugzak
-vast_soort = 'blok'
-vast_item  = None
+# Het blok of ding dat je nu vasthoudt om te plaatsen (None = niks)
+vastgehouden = None
 
 heeft_pikhouweel = False   # heb je al een pikhouweel gemaakt?
 
@@ -412,19 +407,20 @@ def breek_blok():
 
 
 def plaats_blok():
-    """Plaatst een blok of een zelfgemaakt ding tegen het oppervlak waar je kijkt."""
+    """Plaatst het blok/ding dat je vasthoudt. Dit kost 1 uit je rugzak!"""
     if mouse.world_point is None or mouse.world_normal is None:
         return
+    naam = vastgehouden
+    if naam is None or rugzak.get(naam, 0) <= 0:
+        toon_melding("Je hebt dit niet (meer)! Sloop eerst wat blokken.")
+        return
+
     # De nieuwe plek komt net BUITEN het oppervlak (aan de kant waar je staat)
     punt = mouse.world_point + mouse.world_normal * 0.5
     pos  = (round(punt.x), round(punt.y), round(punt.z))
 
-    # Houd je een zelfgemaakt ding vast? Dan dat neerzetten (kost 1 uit je rugzak)
-    if vast_soort == 'item':
-        naam = vast_item
-        if rugzak.get(naam, 0) <= 0:
-            toon_melding(f"Je hebt geen {ITEM_NAMEN.get(naam, naam)} meer! Maak er eerst meer.")
-            return
+    # Houd je een zelfgemaakt ding vast (deur, slab, hek...)? Dan dat neerzetten.
+    if is_item(naam):
         richting = round(speler.rotation_y / 90) * 90   # naar de kant waar je kijkt
         if plaats_speciaal(naam, pos, richting):
             rugzak[naam] -= 1
@@ -432,14 +428,16 @@ def plaats_blok():
             werk_hud_bij()
         return
 
-    # Anders: een gewoon blok plaatsen (vrij, lekker creatief bouwen)
+    # Anders: een gewoon blok plaatsen
     if pos in wereld or pos in speciaal:
         return  # Hier staat al iets
-    wereld[pos] = huidig_blok
+    wereld[pos] = naam
     cx, cz = chunk_van_pos(pos[0], pos[2])
-    chunk_blokken.setdefault((cx, cz), {})[pos] = huidig_blok
+    chunk_blokken.setdefault((cx, cz), {})[pos] = naam
     weggehaald.discard(pos)    # hier staat weer een blok, dus niet meer 'weg'
+    rugzak[naam] -= 1          # het blok gaat uit je rugzak
     geluid_plaatsen.play()
+    werk_hud_bij()
     herbouw_rond(pos)
 
 
@@ -515,16 +513,18 @@ window.fps_counter.enabled = True
 
 # --- Uitleg op het scherm ---
 Text(
-    text="Linker muis = afbreken   Rechter muis = plaatsen   Muiswiel = ander blok\n"
-         "C = maak-tafel   I = inventaris   F = deur open/dicht\n"
+    text="Linker muis = slopen (verzamelen)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
+         "C = maak-tafel   F = deur open/dicht\n"
          "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje",
     position=(-0.85, 0.47),
     scale=1.1,
     background=True,
 )
 
-# --- Blok-kiezer onderaan: laat zien welk blok/ding je vasthoudt ---
-blok_tekst = Text(text="", position=(-0.15, -0.42), scale=1.3, background=True)
+# --- Rugzak-overzicht LINKSONDER: wat heb je, en wat houd je vast? ---
+# Een pijltje '>' staat bij het blok/ding dat je nu vasthoudt om te plaatsen.
+rugzak_hud = Text(text="", position=(-0.87, -0.02), origin=(-0.5, 0.5),
+                  scale=0.9, background=True)
 
 # Een pikhouweel-melding rechtsonder (gaat aan zodra je er een hebt gemaakt)
 pikhouweel_hud = Text(text="Pikhouweel: AAN (2x blokken!)",
@@ -546,81 +546,52 @@ def toon_melding(tekst):
     invoke(verberg_melding, delay=1.5)
 
 
+def is_item(naam):
+    """Is dit een zelfgemaakt ding (uit een recept) en geen gewoon blok?"""
+    return naam in RECEPTEN
+
+
+def beschikbaar():
+    """Alle dingen die je in je rugzak hebt om te plaatsen, in een nette
+    vaste volgorde. (De pikhouweel zit er niet bij, die plaats je niet.)"""
+    volgorde = BLOK_KEUZES + [n for n in RECEPTEN if RECEPTEN[n]['plaatsbaar']]
+    return [n for n in volgorde if rugzak.get(n, 0) > 0]
+
+
 def werk_hud_bij():
-    """Werkt het tekstje onderaan bij: welk blok of ding houd je vast?"""
-    if vast_soort == 'item':
-        naam = ITEM_NAMEN.get(vast_item, vast_item)
-        blok_tekst.text  = f"Vast: {naam}  (nog {rugzak.get(vast_item, 0)})"
-        blok_tekst.color = color.white
-    else:
-        blok_tekst.text  = f"Blok: {huidig_blok.upper()}  ({blok_index + 1}/{len(BLOK_KEUZES)})"
-        k = KLEUREN.get(huidig_blok, color.white)
-        blok_tekst.color = color.rgb(k.r, k.g, k.b)   # zelfde kleur, maar goed zichtbaar
+    """Laat linksonder je rugzak zien, met een pijltje bij wat je vasthoudt."""
+    global vastgehouden
+    spullen = beschikbaar()
+    # Zorg dat je altijd iets geldigs vasthoudt (bv. nadat een blok op is)
+    if vastgehouden not in spullen:
+        vastgehouden = spullen[0] if spullen else None
+    regels = ["RUGZAK:"]
+    for n in spullen:
+        naam = ITEM_NAMEN.get(n, n)
+        pijl = ">" if n == vastgehouden else "  "
+        regels.append(f"{pijl} {naam}: {rugzak[n]}")
+    if len(regels) == 1:
+        regels.append("  (leeg - ga blokken slopen!)")
+    rugzak_hud.text = "\n".join(regels)
 
 
-def kies_blok(index):
-    """Kiest een gewoon blok uit de lijst om vast te houden."""
-    global blok_index, huidig_blok, vast_soort
-    blok_index  = index % len(BLOK_KEUZES)   # blijf netjes binnen de lijst
-    huidig_blok = BLOK_KEUZES[blok_index]
-    vast_soort  = 'blok'
+def kies_vast(naam):
+    """Houd dit blok/ding vast om te plaatsen."""
+    global vastgehouden
+    vastgehouden = naam
     werk_hud_bij()
 
 
-def pak_item(naam):
-    """Pakt een zelfgemaakt ding vast om te plaatsen."""
-    global vast_soort, vast_item
-    vast_soort = 'item'
-    vast_item  = naam
-    werk_hud_bij()
+def blader(stap):
+    """Blader met het muiswiel naar het volgende/vorige ding dat je hebt."""
+    spullen = beschikbaar()
+    if not spullen:
+        return
+    i = spullen.index(vastgehouden) if vastgehouden in spullen else 0
+    kies_vast(spullen[(i + stap) % len(spullen)])
 
 
-kies_blok(0)   # begin met het eerste blok
-
-
-# --- Inventaris (open en sluit met de toets 'i') ---
-# Een scherm met alle blokken als vakjes. Klik op een vakje om dat blok te kiezen.
-inventaris = Entity(parent=camera.ui, enabled=False)
-# Donkere achtergrond zodat de vakjes goed opvallen
-Entity(parent=inventaris, model='quad', color=color.rgba(0, 0, 0, 0.75),
-       scale=(1.8, 1.0), z=1)
-Text(parent=inventaris, text="Kies een blok (klik erop)   -   'i' om te sluiten",
-     position=(0, 0.4), origin=(0, 0), scale=1.3)
-
-
-def verberg_inventaris():
-    """Sluit de inventaris en vergrendel de muis weer voor het rondkijken."""
-    inventaris.enabled = False
-    mouse.locked  = True
-    mouse.visible = False
-
-
-def toon_inventaris():
-    """Open de inventaris en maak de muis vrij zodat je kunt klikken."""
-    inventaris.enabled = True
-    mouse.locked  = False
-    mouse.visible = True
-
-
-def kies_uit_inventaris(index):
-    """Wordt aangeroepen als je op een blok-vakje klikt."""
-    kies_blok(index)
-    verberg_inventaris()
-
-
-# Maak voor elk blok een gekleurd vakje in een net rooster (7 op een rij)
-KOLOMMEN = 7
-for i, naam in enumerate(BLOK_KEUZES):
-    rij = i // KOLOMMEN
-    kol = i % KOLOMMEN
-    vx  = (kol - (KOLOMMEN - 1) / 2) * 0.2
-    vy  = 0.2 - rij * 0.22
-    kleur = KLEUREN[naam]
-    vakje = Button(parent=inventaris, model='quad', scale=0.16, position=(vx, vy),
-                   color=color.rgb(kleur.r, kleur.g, kleur.b))
-    vakje.on_click = Func(kies_uit_inventaris, i)   # klik = dit blok kiezen
-    Text(parent=inventaris, text=naam, position=(vx, vy - 0.1),
-         origin=(0, 0), scale=0.7)
+werk_hud_bij()   # laat meteen je begin-rugzak zien
 
 
 # --- Maak-tafel (open en sluit met de toets 'c') ---
@@ -668,7 +639,7 @@ def craft(naam):
     if not kan_betalen(naam):
         # Niet genoeg materiaal: maar als je er al een hebt, pak je hem vast
         if r['plaatsbaar'] and rugzak.get(naam, 0) > 0:
-            pak_item(naam)
+            kies_vast(naam)
         else:
             toon_melding("Te weinig materiaal!")
         return
@@ -680,7 +651,7 @@ def craft(naam):
         heeft_pikhouweel = True
         pikhouweel_hud.enabled = True
     elif r['plaatsbaar']:
-        pak_item(naam)              # meteen vastpakken om te plaatsen
+        kies_vast(naam)             # meteen vastpakken om te plaatsen
     geluid_plaatsen.play()
     werk_maaktafel_bij()
     werk_hud_bij()
@@ -688,8 +659,6 @@ def craft(naam):
 
 def toon_maaktafel():
     """Opent de maak-tafel en maakt de muis vrij om te klikken."""
-    if inventaris.enabled:
-        verberg_inventaris()
     maaktafel.enabled = True
     mouse.locked  = False
     mouse.visible = True
@@ -804,28 +773,22 @@ def input(toets):
         verberg_maaktafel() if maaktafel.enabled else toon_maaktafel()
         return
 
-    # De inventaris openen of sluiten (niet samen met de maak-tafel)
-    if toets == 'i':
-        if maaktafel.enabled:
-            return
-        verberg_inventaris() if inventaris.enabled else toon_inventaris()
-        return
-
-    # Alleen breken/plaatsen/deur als er geen menu open staat
-    if not inventaris.enabled and not maaktafel.enabled:
+    # Alleen breken/plaatsen/deur als de maak-tafel dicht is
+    if not maaktafel.enabled:
         if toets == 'left mouse down':  breek_blok()
         if toets == 'right mouse down': plaats_blok()
         if toets == 'f':                toggle_deur()
 
-    # Met het muiswiel door alle blokken bladeren
-    if toets == 'scroll up':   kies_blok(blok_index + 1)
-    if toets == 'scroll down': kies_blok(blok_index - 1)
+    # Met het muiswiel door de blokken die je HEBT bladeren
+    if toets == 'scroll up':   blader(1)
+    if toets == 'scroll down': blader(-1)
 
-    # De cijfertoetsen 1 t/m 9 en 0 kiezen snel de eerste tien blokken
+    # De cijfertoetsen 1 t/m 9 en 0 kiezen snel uit wat je in je rugzak hebt
     if len(toets) == 1 and toets in '1234567890':
         nummer = 9 if toets == '0' else int(toets) - 1   # '1'->0, ..., '0'->9
-        if nummer < len(BLOK_KEUZES):
-            kies_blok(nummer)
+        spullen = beschikbaar()
+        if nummer < len(spullen):
+            kies_vast(spullen[nummer])
 
     if toets == 'f3':
         debug_tekst.enabled        = not debug_tekst.enabled
