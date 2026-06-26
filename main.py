@@ -56,6 +56,17 @@ KLEUREN = {
     'mos':      color.rgb( 60/255, 110/255,  40/255),
     'paars':    color.rgb(140/255,  60/255, 200/255),
     'roze':     color.rgb(240/255, 140/255, 200/255),
+    # Nieuwe natuur-blokken die je in de wereld kunt vinden
+    'klei':        color.rgb(160/255, 165/255, 175/255),
+    'zandsteen':   color.rgb(220/255, 205/255, 160/255),
+    'paddenstoel': color.rgb(200/255,  50/255,  50/255),
+    # Gekleurde blokken die je zelf maakt in de maak-tafel
+    'rood':     color.rgb(220/255,  50/255,  50/255),
+    'oranje':   color.rgb(240/255, 140/255,  40/255),
+    'geel':     color.rgb(240/255, 220/255,  60/255),
+    'groen':    color.rgb( 70/255, 190/255,  70/255),
+    'blauw':    color.rgb( 60/255, 110/255, 220/255),
+    'wit':      color.rgb(240/255, 240/255, 245/255),
     'water':    color.rgba(45/255, 110/255, 200/255, 0.6),
 }
 
@@ -63,7 +74,8 @@ KLEUREN = {
 BLOK_KEUZES = ['gras', 'aarde', 'steen', 'zand', 'hout', 'planken', 'blad',
                'baksteen', 'glas', 'sneeuw', 'goud', 'diamant', 'ijzer',
                'smaragd', 'robijn', 'kool', 'lava', 'pompoen', 'mos',
-               'paars', 'roze']
+               'paars', 'roze', 'klei', 'zandsteen', 'paddenstoel',
+               'rood', 'oranje', 'geel', 'groen', 'blauw', 'wit']
 
 WATER_NIVEAU = 6          # Tot welke hoogte staat er water in de lage plekken
 
@@ -102,15 +114,32 @@ def hoogte_op(x, z):
     return int(h + 10)
 
 
-def bepaal_blok_type(y, grond_hoogte):
-    """Geeft het juiste bloktype terug op basis van de hoogte."""
+def steen_of_erts(x, y, z):
+    """Diep in de steen zit soms een erts in plaats van gewone steen.
+    Hoe dieper je graaft, hoe zeldzamer (en mooier) het erts kan zijn!"""
+    # Een eigen willekeurig getal per plekje, altijd hetzelfde voor die plek
+    rng = random.Random((x * 73856093) ^ (y * 19349663) ^ (z * 83492791) ^ WERELD_ZAAD)
+    r = rng.random()
+    if y <= -2 and r < 0.012:  return 'diamant'   # heel diep en heel zeldzaam
+    if y <=  0 and r < 0.022:  return 'robijn'
+    if y <=  2 and r < 0.034:  return 'smaragd'
+    if y <=  4 and r < 0.054:  return 'goud'
+    if y <= 12 and r < 0.090:  return 'ijzer'
+    if            r < 0.140:   return 'kool'       # kool kom je overal tegen
+    return 'steen'
+
+
+def bepaal_blok_type(x, y, z, grond_hoogte):
+    """Geeft het juiste bloktype terug op basis van de plek en de hoogte."""
     if y == grond_hoogte:
         if y <= 5:   return 'zand'
         if y >= 18:  return 'sneeuw'
         return 'gras'
+    if grond_hoogte <= 6 and y >= grond_hoogte - 2:
+        return 'zandsteen'        # vlak onder het strand zit zandsteen
     if y >= grond_hoogte - 3:
         return 'aarde'
-    return 'steen'
+    return steen_of_erts(x, y, z)  # diep in de grond: steen of soms erts
 
 
 # Staan er grotten (holtes) diep onder de grond?
@@ -167,7 +196,7 @@ def onthul_buren(pos):
             continue
         if buur not in wereld and is_gevuld_wiskundig(*buur):
             grond = hoogte_op(buur[0], buur[2])
-            t = bepaal_blok_type(buur[1], grond)
+            t = bepaal_blok_type(buur[0], buur[1], buur[2], grond)
             wereld[buur] = t
             cx, cz = chunk_van_pos(buur[0], buur[2])
             chunk_blokken.setdefault((cx, cz), {})[buur] = t
@@ -205,18 +234,24 @@ def genereer_chunk_data(cx, cz):
             # De grond en de lagen eronder
             for y in range(grond, grond - WERELD_DIEPTE, -1):
                 if not is_grot(x, y, z, grond):
-                    blokken[(x, y, z)] = bepaal_blok_type(y, grond)
+                    blokken[(x, y, z)] = bepaal_blok_type(x, y, z, grond)
+
+            # Klei op de bodem van meertjes (bij het water)
+            if grond <= WATER_NIVEAU and rng.random() < 0.5:
+                blokken[(x, grond, z)] = 'klei'
 
             # Water in de lage plekken
             if grond < WATER_NIVEAU:
                 for y in range(grond + 1, WATER_NIVEAU + 1):
                     blokken[(x, y, z)] = 'water'
 
-            # Soms een boom. We houden 2 blokken afstand van de rand,
-            # zodat de bladeren netjes binnen dit stukje wereld blijven.
-            if 2 <= lx <= CHUNK_GROOTTE - 3 and 2 <= lz <= CHUNK_GROOTTE - 3:
-                if blokken.get((x, grond, z)) == 'gras' and rng.random() < 0.05:
-                    voeg_boom_toe(blokken, x, grond, z, rng)
+            # Op het gras: soms een boom, of een paddenstoel.
+            if blokken.get((x, grond, z)) == 'gras':
+                in_het_midden = 2 <= lx <= CHUNK_GROOTTE - 3 and 2 <= lz <= CHUNK_GROOTTE - 3
+                if in_het_midden and rng.random() < 0.05:
+                    voeg_boom_toe(blokken, x, grond, z, rng)   # bladeren binnen het stukje
+                elif rng.random() < 0.04:
+                    blokken[(x, grond + 1, z)] = 'paddenstoel'  # klein paddenstoeltje
 
     chunk_blokken[(cx, cz)] = blokken
     # Zet alle blokken ook in het grote telefoonboek
@@ -283,9 +318,12 @@ speciaal = {}   # plek (x,y,z) -> record met info over het ding dat daar staat
 ITEM_NAMEN = {
     'slab': 'Halve blok', 'valluik': 'Valluik', 'trap': 'Traptrede',
     'hek': 'Hek', 'deur': 'Deur', 'pikhouweel': 'Pikhouweel',
+    'rood': 'Rood blok', 'oranje': 'Oranje blok', 'geel': 'Geel blok',
+    'groen': 'Groen blok', 'blauw': 'Blauw blok', 'wit': 'Wit blok',
 }
 
 # De recepten: wat kost het, en hoeveel krijg je ervan?
+# 'is_blok' = True betekent: het is een gewoon blok (geen ding met eigen vorm).
 RECEPTEN = {
     'slab':       {'kosten': {'steen': 3},            'maakt': 6, 'plaatsbaar': True},
     'valluik':    {'kosten': {'hout': 4},             'maakt': 3, 'plaatsbaar': True},
@@ -293,6 +331,12 @@ RECEPTEN = {
     'hek':        {'kosten': {'hout': 4},             'maakt': 4, 'plaatsbaar': True},
     'deur':       {'kosten': {'hout': 6},             'maakt': 1, 'plaatsbaar': True},
     'pikhouweel': {'kosten': {'steen': 3, 'hout': 2}, 'maakt': 1, 'plaatsbaar': False},
+    'rood':   {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
+    'oranje': {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
+    'geel':   {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
+    'groen':  {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
+    'blauw':  {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
+    'wit':    {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
 }
 
 
@@ -677,14 +721,18 @@ def toon_melding(tekst):
 
 
 def is_item(naam):
-    """Is dit een zelfgemaakt ding (uit een recept) en geen gewoon blok?"""
-    return naam in RECEPTEN
+    """Is dit een zelfgemaakt ding met een eigen vorm (deur, slab...)?
+    Gekleurde blokken tellen NIET mee: dat zijn gewone blokken."""
+    return naam in RECEPTEN and not RECEPTEN[naam].get('is_blok')
 
 
 def beschikbaar():
     """Alle dingen die je in je rugzak hebt om te plaatsen, in een nette
     vaste volgorde. (De pikhouweel zit er niet bij, die plaats je niet.)"""
-    volgorde = BLOK_KEUZES + [n for n in RECEPTEN if RECEPTEN[n]['plaatsbaar']]
+    # Gewone blokken staan al in BLOK_KEUZES; hier voegen we alleen de
+    # zelfgemaakte dingen-met-vorm toe (deur, slab, trap, hek, valluik).
+    volgorde = BLOK_KEUZES + [n for n in RECEPTEN
+                             if RECEPTEN[n]['plaatsbaar'] and not RECEPTEN[n].get('is_blok')]
     return [n for n in volgorde if rugzak.get(n, 0) > 0]
 
 
@@ -769,15 +817,20 @@ Text(parent=maaktafel, text="MAAK-TAFEL   -   klik om te maken   -   'c' om te s
 # Linksboven: wat je in je rugzak hebt
 materiaal_tekst = Text(parent=maaktafel, text="", position=(-0.72, 0.30), scale=1.0)
 
-# Voor elk recept een knop met ernaast de kosten
-recept_teksten = {}
+# Voor elk recept een knop (naam + kosten erop). De knopkleur laat zien of je
+# het kunt maken: groen = genoeg materiaal, grijs = te weinig. 2 kolommen.
+recept_knoppen = {}
 for i, naam in enumerate(RECEPTEN):
-    ry = 0.22 - i * 0.12
-    knop = Button(parent=maaktafel, text=ITEM_NAMEN[naam],
-                  scale=(0.45, 0.09), position=(-0.32, ry), color=color.azure)
+    kol = i // 6                       # 0 = linkerkolom, 1 = rechterkolom
+    rij = i % 6
+    kx = -0.25 + kol * 0.5
+    ky = 0.28 - rij * 0.105
+    kosten = "  ".join(f"{n}x {m}" for m, n in RECEPTEN[naam]['kosten'].items())
+    knop = Button(parent=maaktafel, text=f"{ITEM_NAMEN[naam]}\n{kosten}",
+                  scale=(0.42, 0.095), position=(kx, ky), color=color.azure)
+    knop.text_entity.scale *= 0.7     # kleinere letters zodat het mooi past
     knop.on_click = Func(lambda n=naam: craft(n))
-    recept_teksten[naam] = Text(parent=maaktafel, text="", position=(-0.05, ry),
-                                origin=(-0.5, 0), scale=0.9)
+    recept_knoppen[naam] = knop
 
 
 def kan_betalen(naam):
@@ -786,15 +839,13 @@ def kan_betalen(naam):
 
 
 def werk_maaktafel_bij():
-    """Werkt de getallen op de maak-tafel bij (wat je hebt en wat je kunt maken)."""
-    mats = ['hout', 'steen', 'aarde', 'zand', 'gras', 'blad']
+    """Werkt de maak-tafel bij: je rugzak links, en de knoppen kleuren
+    groen (genoeg materiaal) of grijs (te weinig)."""
+    mats = ['hout', 'steen', 'zand', 'aarde', 'kool', 'ijzer', 'goud', 'diamant']
     materiaal_tekst.text = "Je rugzak:\n" + "\n".join(
         f"{m}: {rugzak.get(m, 0)}" for m in mats)
-    for naam, t in recept_teksten.items():
-        r = RECEPTEN[naam]
-        kosten = " + ".join(f"{n}x {m}" for m, n in r['kosten'].items())
-        t.text  = f"= {kosten}  ->  {r['maakt']}x   (heb: {rugzak.get(naam, 0)})"
-        t.color = color.lime if kan_betalen(naam) else color.red
+    for naam, knop in recept_knoppen.items():
+        knop.color = color.lime if kan_betalen(naam) else color.gray
 
 
 def craft(naam):
