@@ -471,6 +471,18 @@ def update():
     helder = max(0.1, (hoogte + 1) / 2)
     lucht.color = color.rgb(0.5 * helder, 0.7 * helder, 1.0 * helder)
 
+    # --- Plafond-check: niet van onderen in een blok springen ---
+    # Tijdens het springen schuift de speler recht omhoog. De besturing kijkt
+    # zelf NIET of er een blok boven je hoofd zit, dus dan schiet je er dwars
+    # in. Daarom schieten we hier een straaltje recht omhoog vanaf je hoofd.
+    # Zit er vlak boven je een blok? Dan stoppen we de sprong meteen.
+    sprong = getattr(speler, 'y_animator', None)
+    if sprong is not None and not speler.grounded:
+        boven = raycast(speler.world_position + Vec3(0, speler.height - 0.1, 0),
+                        Vec3(0, 1, 0), distance=0.3, ignore=[speler])
+        if boven.hit:
+            speler.y_animator.pause()   # stop het omhoog-springen meteen
+
     # --- Reddingslijn: alleen als je ECHT in de leegte valt ---
     # We schieten een straal recht naar beneden. Is er grond onder je? Top, dan
     # doen we niks (zo kun je zo diep graven als je wilt). Is er niets onder je
