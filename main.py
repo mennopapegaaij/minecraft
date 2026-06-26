@@ -69,6 +69,18 @@ WATER_NIVEAU = 6          # Tot welke hoogte staat er water in de lage plekken
 blok_index   = 0          # Welk blok uit de lijst je vasthoudt
 huidig_blok  = BLOK_KEUZES[blok_index]
 
+# --- Rugzak: hoeveel je van elk blok of zelfgemaakt ding hebt ---
+# We beginnen met een beetje hout en steen, zodat je meteen kunt maken.
+rugzak = {'hout': 10, 'steen': 10}
+
+# Wat je nu vasthoudt om te plaatsen:
+#   vast_soort 'blok' -> een gewoon blok (huidig_blok), vrij te plaatsen
+#   vast_soort 'item' -> een zelfgemaakt ding (vast_item), kost 1 uit je rugzak
+vast_soort = 'blok'
+vast_item  = None
+
+heeft_pikhouweel = False   # heb je al een pikhouweel gemaakt?
+
 # --- Het geheugen van de wereld ---
 # 'wereld' is het grote telefoonboek: op welke plek (x, y, z) staat welk soort blok?
 # Dit zijn alleen getallen, geen 3D-modellen. Heel licht voor de computer.
@@ -266,6 +278,91 @@ def vergeet_chunk(cx, cz):
         wereld.pop(pos, None)
 
 
+# --- Zelfgemaakte dingen (specials) ---
+# Deze hebben een eigen vorm en zijn LOSSE 3D-modellen (niet samengeplakt in
+# een stukje wereld). We onthouden ze apart in 'speciaal'. Plaatsen kost 1 uit
+# je rugzak; weer afbreken geeft het ding terug in je rugzak.
+speciaal = {}   # plek (x,y,z) -> record met info over het ding dat daar staat
+
+# Mooie namen om op het scherm te laten zien
+ITEM_NAMEN = {
+    'slab': 'Halve blok', 'valluik': 'Valluik', 'trap': 'Traptrede',
+    'hek': 'Hek', 'deur': 'Deur', 'pikhouweel': 'Pikhouweel',
+}
+
+# De recepten: wat kost het, en hoeveel krijg je ervan?
+RECEPTEN = {
+    'slab':       {'kosten': {'steen': 3},            'maakt': 6, 'plaatsbaar': True},
+    'valluik':    {'kosten': {'hout': 4},             'maakt': 3, 'plaatsbaar': True},
+    'trap':       {'kosten': {'steen': 6},            'maakt': 4, 'plaatsbaar': True},
+    'hek':        {'kosten': {'hout': 4},             'maakt': 4, 'plaatsbaar': True},
+    'deur':       {'kosten': {'hout': 6},             'maakt': 1, 'plaatsbaar': True},
+    'pikhouweel': {'kosten': {'steen': 3, 'hout': 2}, 'maakt': 1, 'plaatsbaar': False},
+}
+
+
+def maak_speciaal_model(naam, pos, richting=0):
+    """Bouwt het 3D-model van een zelfgemaakt ding op plek pos.
+    Geeft twee dingen terug: het model om weg te gooien bij afbreken, en
+    het deel waar je op klikt (bij een deur is dat het paneel)."""
+    x, y, z = pos
+    hout  = KLEUREN['planken']   # houtkleur voor de houten dingen
+    steen = KLEUREN['steen']
+
+    if naam == 'slab':            # een halve blok: ligt op de bodem van het vakje
+        ent = Entity(model='cube', texture='white_cube', color=steen,
+                     position=(x, y - 0.25, z), scale=(1, 0.5, 1), collider='box')
+        return ent, ent
+
+    if naam == 'valluik':         # een dun luikje op de vloer
+        ent = Entity(model='cube', texture='white_cube', color=hout,
+                     position=(x, y - 0.43, z), scale=(1, 0.15, 1), collider='box')
+        return ent, ent
+
+    if naam == 'hek':             # een paaltje met een dwarsbalkje erop
+        ouder = Entity(position=pos)
+        Entity(parent=ouder, model='cube', position=(0, 0,   0), scale=(0.2, 1,   0.2))
+        Entity(parent=ouder, model='cube', position=(0, 0.2, 0), scale=(1,   0.15, 0.15))
+        ouder.combine(auto_destroy=True)
+        ouder.texture = 'white_cube'; ouder.color = hout; ouder.collider = 'box'
+        return ouder, ouder
+
+    if naam == 'trap':            # traptrede: onderste helft + achterste blokje erop
+        ouder = Entity(position=pos, rotation_y=richting)
+        Entity(parent=ouder, model='cube', position=(0, -0.25,  0),    scale=(1, 0.5, 1))
+        Entity(parent=ouder, model='cube', position=(0,  0.25, -0.25), scale=(1, 0.5, 0.5))
+        ouder.combine(auto_destroy=True)
+        ouder.texture = 'white_cube'; ouder.color = steen; ouder.collider = 'mesh'
+        return ouder, ouder
+
+    if naam == 'deur':            # een deur van 2 blokken hoog die opendraait
+        scharnier = Entity(position=(x - 0.5, y + 0.5, z), rotation_y=richting)
+        paneel = Entity(parent=scharnier, model='cube', texture='white_cube',
+                        color=hout, position=(0.45, 0, 0),
+                        scale=(0.9, 1.95, 0.18), collider='box')
+        return scharnier, paneel
+
+    return None, None
+
+
+def plaats_speciaal(naam, pos, richting):
+    """Zet een zelfgemaakt ding neer (als er plek is). Geeft True als het lukte."""
+    cellen = [pos]
+    if naam == 'deur':            # een deur is 2 blokken hoog
+        cellen.append((pos[0], pos[1] + 1, pos[2]))
+    # Alle vakjes die het ding nodig heeft, moeten leeg zijn
+    for c in cellen:
+        if c in wereld or c in speciaal:
+            return False
+    model, klik = maak_speciaal_model(naam, pos, richting)
+    record = {'naam': naam, 'model': model, 'cellen': cellen,
+              'open': False, 'richting': richting}
+    klik.record = record          # zo weten we later: hier klikte je op dit ding
+    for c in cellen:
+        speciaal[c] = record
+    return True
+
+
 # --- Blokken breken en plaatsen (met een 'straal' vanuit je ogen) ---
 def herbouw_rond(pos):
     """Bouwt het stukje wereld van een blok opnieuw, plus de buur-stukjes
@@ -279,31 +376,65 @@ def herbouw_rond(pos):
 
 
 def breek_blok():
-    """Breekt het blok af waar je naar kijkt."""
+    """Breekt het blok af waar je naar kijkt en stopt het in je rugzak."""
     if mouse.world_point is None or mouse.world_normal is None:
         return
-    # Het blok zit net BINNEN het oppervlak waar je straal op landt
+
+    # Klik je op een zelfgemaakt ding (deur, slab, hek...)? Haal dat dan weg
+    # en stop het terug in je rugzak.
+    geklikt = mouse.hovered_entity
+    if geklikt is not None and hasattr(geklikt, 'record'):
+        record = geklikt.record
+        rugzak[record['naam']] = rugzak.get(record['naam'], 0) + 1
+        destroy(record['model'])
+        for c in record['cellen']:
+            speciaal.pop(c, None)
+        geluid_afbreken.play()
+        werk_hud_bij()
+        return
+
+    # Anders: een gewoon blok afbreken. Het blok zit net BINNEN het oppervlak.
     punt = mouse.world_point - mouse.world_normal * 0.5
     pos  = (round(punt.x), round(punt.y), round(punt.z))
     if pos in wereld:
-        wereld.pop(pos, None)
+        t = wereld.pop(pos)
         cx, cz = chunk_van_pos(pos[0], pos[2])
         chunk_blokken.get((cx, cz), {}).pop(pos, None)
         weggehaald.add(pos)        # onthoud dat dit blok weg is (komt niet terug)
         onthul_buren(pos)          # maak de blokken eronder/ernaast aan (geen void)
+        # In je rugzak stoppen (water pak je niet op). Met pikhouweel krijg je 2!
+        if t != 'water':
+            aantal = 2 if heeft_pikhouweel else 1
+            rugzak[t] = rugzak.get(t, 0) + aantal
+            werk_hud_bij()
         geluid_afbreken.play()
         herbouw_rond(pos)
 
 
 def plaats_blok():
-    """Plaatst een nieuw blok tegen het blok waar je naar kijkt."""
+    """Plaatst een blok of een zelfgemaakt ding tegen het oppervlak waar je kijkt."""
     if mouse.world_point is None or mouse.world_normal is None:
         return
-    # Het nieuwe blok komt net BUITEN het oppervlak (aan de kant waar je staat)
+    # De nieuwe plek komt net BUITEN het oppervlak (aan de kant waar je staat)
     punt = mouse.world_point + mouse.world_normal * 0.5
     pos  = (round(punt.x), round(punt.y), round(punt.z))
-    if pos in wereld:
-        return  # Hier staat al een blok
+
+    # Houd je een zelfgemaakt ding vast? Dan dat neerzetten (kost 1 uit je rugzak)
+    if vast_soort == 'item':
+        naam = vast_item
+        if rugzak.get(naam, 0) <= 0:
+            toon_melding(f"Je hebt geen {ITEM_NAMEN.get(naam, naam)} meer! Maak er eerst meer.")
+            return
+        richting = round(speler.rotation_y / 90) * 90   # naar de kant waar je kijkt
+        if plaats_speciaal(naam, pos, richting):
+            rugzak[naam] -= 1
+            geluid_plaatsen.play()
+            werk_hud_bij()
+        return
+
+    # Anders: een gewoon blok plaatsen (vrij, lekker creatief bouwen)
+    if pos in wereld or pos in speciaal:
+        return  # Hier staat al iets
     wereld[pos] = huidig_blok
     cx, cz = chunk_van_pos(pos[0], pos[2])
     chunk_blokken.setdefault((cx, cz), {})[pos] = huidig_blok
@@ -385,24 +516,63 @@ window.fps_counter.enabled = True
 # --- Uitleg op het scherm ---
 Text(
     text="Linker muis = afbreken   Rechter muis = plaatsen   Muiswiel = ander blok\n"
+         "C = maak-tafel   I = inventaris   F = deur open/dicht\n"
          "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje",
     position=(-0.85, 0.47),
     scale=1.1,
     background=True,
 )
 
-# --- Blok-kiezer onderaan: laat zien welk blok je vasthoudt ---
+# --- Blok-kiezer onderaan: laat zien welk blok/ding je vasthoudt ---
 blok_tekst = Text(text="", position=(-0.15, -0.42), scale=1.3, background=True)
+
+# Een pikhouweel-melding rechtsonder (gaat aan zodra je er een hebt gemaakt)
+pikhouweel_hud = Text(text="Pikhouweel: AAN (2x blokken!)",
+                      position=(0.45, -0.42), scale=1.0, background=True, enabled=False)
+
+# Een melding in het midden (bv. "Te weinig materiaal!"). Verdwijnt vanzelf.
+melding = Text(text="", position=(0, -0.28), origin=(0, 0), scale=1.3,
+               background=True, enabled=False)
+
+
+def verberg_melding():
+    melding.enabled = False
+
+
+def toon_melding(tekst):
+    """Laat 1,5 seconde een melding in beeld zien."""
+    melding.text = tekst
+    melding.enabled = True
+    invoke(verberg_melding, delay=1.5)
+
+
+def werk_hud_bij():
+    """Werkt het tekstje onderaan bij: welk blok of ding houd je vast?"""
+    if vast_soort == 'item':
+        naam = ITEM_NAMEN.get(vast_item, vast_item)
+        blok_tekst.text  = f"Vast: {naam}  (nog {rugzak.get(vast_item, 0)})"
+        blok_tekst.color = color.white
+    else:
+        blok_tekst.text  = f"Blok: {huidig_blok.upper()}  ({blok_index + 1}/{len(BLOK_KEUZES)})"
+        k = KLEUREN.get(huidig_blok, color.white)
+        blok_tekst.color = color.rgb(k.r, k.g, k.b)   # zelfde kleur, maar goed zichtbaar
 
 
 def kies_blok(index):
-    """Kiest een blok uit de lijst en laat de naam onderaan zien."""
-    global blok_index, huidig_blok
+    """Kiest een gewoon blok uit de lijst om vast te houden."""
+    global blok_index, huidig_blok, vast_soort
     blok_index  = index % len(BLOK_KEUZES)   # blijf netjes binnen de lijst
     huidig_blok = BLOK_KEUZES[blok_index]
-    blok_tekst.text = f"Blok: {huidig_blok.upper()}  ({blok_index + 1}/{len(BLOK_KEUZES)})"
-    k = KLEUREN.get(huidig_blok, color.white)
-    blok_tekst.color = color.rgb(k.r, k.g, k.b)   # zelfde kleur, maar altijd goed zichtbaar
+    vast_soort  = 'blok'
+    werk_hud_bij()
+
+
+def pak_item(naam):
+    """Pakt een zelfgemaakt ding vast om te plaatsen."""
+    global vast_soort, vast_item
+    vast_soort = 'item'
+    vast_item  = naam
+    werk_hud_bij()
 
 
 kies_blok(0)   # begin met het eerste blok
@@ -451,6 +621,96 @@ for i, naam in enumerate(BLOK_KEUZES):
     vakje.on_click = Func(kies_uit_inventaris, i)   # klik = dit blok kiezen
     Text(parent=inventaris, text=naam, position=(vx, vy - 0.1),
          origin=(0, 0), scale=0.7)
+
+
+# --- Maak-tafel (open en sluit met de toets 'c') ---
+# Hier maak je nieuwe dingen van de blokken die je verzameld hebt.
+maaktafel = Entity(parent=camera.ui, enabled=False)
+Entity(parent=maaktafel, model='quad', color=color.rgba(0, 0, 0, 0.8),
+       scale=(1.6, 1.0), z=1)
+Text(parent=maaktafel, text="MAAK-TAFEL   -   klik om te maken   -   'c' om te sluiten",
+     position=(0, 0.42), origin=(0, 0), scale=1.2)
+# Linksboven: wat je in je rugzak hebt
+materiaal_tekst = Text(parent=maaktafel, text="", position=(-0.72, 0.30), scale=1.0)
+
+# Voor elk recept een knop met ernaast de kosten
+recept_teksten = {}
+for i, naam in enumerate(RECEPTEN):
+    ry = 0.22 - i * 0.12
+    knop = Button(parent=maaktafel, text=ITEM_NAMEN[naam],
+                  scale=(0.45, 0.09), position=(-0.32, ry), color=color.azure)
+    knop.on_click = Func(lambda n=naam: craft(n))
+    recept_teksten[naam] = Text(parent=maaktafel, text="", position=(-0.05, ry),
+                                origin=(-0.5, 0), scale=0.9)
+
+
+def kan_betalen(naam):
+    """Heb je genoeg materiaal voor dit recept?"""
+    return all(rugzak.get(m, 0) >= n for m, n in RECEPTEN[naam]['kosten'].items())
+
+
+def werk_maaktafel_bij():
+    """Werkt de getallen op de maak-tafel bij (wat je hebt en wat je kunt maken)."""
+    mats = ['hout', 'steen', 'aarde', 'zand', 'gras', 'blad']
+    materiaal_tekst.text = "Je rugzak:\n" + "\n".join(
+        f"{m}: {rugzak.get(m, 0)}" for m in mats)
+    for naam, t in recept_teksten.items():
+        r = RECEPTEN[naam]
+        kosten = " + ".join(f"{n}x {m}" for m, n in r['kosten'].items())
+        t.text  = f"= {kosten}  ->  {r['maakt']}x   (heb: {rugzak.get(naam, 0)})"
+        t.color = color.lime if kan_betalen(naam) else color.red
+
+
+def craft(naam):
+    """Maakt een ding als je genoeg materiaal hebt."""
+    global heeft_pikhouweel
+    r = RECEPTEN[naam]
+    if not kan_betalen(naam):
+        # Niet genoeg materiaal: maar als je er al een hebt, pak je hem vast
+        if r['plaatsbaar'] and rugzak.get(naam, 0) > 0:
+            pak_item(naam)
+        else:
+            toon_melding("Te weinig materiaal!")
+        return
+    # Materiaal afrekenen en het ding erbij
+    for m, n in r['kosten'].items():
+        rugzak[m] -= n
+    rugzak[naam] = rugzak.get(naam, 0) + r['maakt']
+    if naam == 'pikhouweel':
+        heeft_pikhouweel = True
+        pikhouweel_hud.enabled = True
+    elif r['plaatsbaar']:
+        pak_item(naam)              # meteen vastpakken om te plaatsen
+    geluid_plaatsen.play()
+    werk_maaktafel_bij()
+    werk_hud_bij()
+
+
+def toon_maaktafel():
+    """Opent de maak-tafel en maakt de muis vrij om te klikken."""
+    if inventaris.enabled:
+        verberg_inventaris()
+    maaktafel.enabled = True
+    mouse.locked  = False
+    mouse.visible = True
+    werk_maaktafel_bij()
+
+
+def verberg_maaktafel():
+    """Sluit de maak-tafel en vergrendelt de muis weer."""
+    maaktafel.enabled = False
+    mouse.locked  = True
+    mouse.visible = False
+
+
+def toggle_deur():
+    """Doet de deur waar je naar kijkt open of dicht."""
+    ent = mouse.hovered_entity
+    if ent is not None and hasattr(ent, 'record') and ent.record['naam'] == 'deur':
+        rec = ent.record
+        rec['open'] = not rec['open']
+        doel = rec['richting'] + (90 if rec['open'] else 0)
+        rec['model'].animate('rotation_y', doel, duration=0.2)
 
 
 # --- Meet-schermpje (linksonder) ---
@@ -539,15 +799,23 @@ def update():
 
 
 def input(toets):
-    # De inventaris openen of sluiten
+    # De maak-tafel openen of sluiten
+    if toets == 'c':
+        verberg_maaktafel() if maaktafel.enabled else toon_maaktafel()
+        return
+
+    # De inventaris openen of sluiten (niet samen met de maak-tafel)
     if toets == 'i':
+        if maaktafel.enabled:
+            return
         verberg_inventaris() if inventaris.enabled else toon_inventaris()
         return
 
-    # Als de inventaris open is, niet breken/plaatsen (je klikt dan op vakjes)
-    if not inventaris.enabled:
+    # Alleen breken/plaatsen/deur als er geen menu open staat
+    if not inventaris.enabled and not maaktafel.enabled:
         if toets == 'left mouse down':  breek_blok()
         if toets == 'right mouse down': plaats_blok()
+        if toets == 'f':                toggle_deur()
 
     # Met het muiswiel door alle blokken bladeren
     if toets == 'scroll up':   kies_blok(blok_index + 1)
