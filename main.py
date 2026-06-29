@@ -668,11 +668,28 @@ class Monster(Levend):
             if afstand > 1.3:                                # loop ernaartoe
                 self.position += self.forward * time.dt * self.snelheid
         self.op_de_grond(1.0)
-        # Sta je vlakbij? Dan slaat het monster jou (maar niet te vaak achter elkaar)
+        # Het monster mag je ALLEEN slaan als het ECHT naast je staat:
+        #  1) vlakbij op de plattegrond (naast je, niet ver weg),
+        #  2) ongeveer op dezelfde hoogte (niet boven of onder je),
+        #  3) met vrij zicht (geen blok ertussen).
         self.sla_cooldown -= time.dt
-        if afstand < 1.7 and self.sla_cooldown <= 0:
+        if (self.sla_cooldown <= 0 and afstand < 1.6
+                and abs(naar.y) < 1.5 and self.vrij_zicht()):
             self.sla_cooldown = 1.0
             doe_schade(1)
+
+    def vrij_zicht(self):
+        """Kan het monster je echt zien, of zit er een blok tussen?
+        We schieten een onzichtbaar straaltje van het monster naar jou.
+        Raakt het straaltje een blok onderweg? Dan is het zicht geblokkeerd."""
+        oog  = self.world_position + Vec3(0, 1, 0)     # ongeveer het hoofd
+        doel = speler.world_position + Vec3(0, 1, 0)    # ongeveer jouw lijf
+        naar = doel - oog
+        afst = naar.length()
+        if afst < 0.01:
+            return True
+        straal = raycast(oog, naar.normalized(), distance=afst, ignore=[self])
+        return not straal.hit                           # niks geraakt = vrij zicht
 
 
 def linker_klik():
