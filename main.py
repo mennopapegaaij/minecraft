@@ -86,12 +86,30 @@ rugzak = {}
 # Het blok of ding dat je nu vasthoudt om te plaatsen (None = niks)
 vastgehouden = None
 
-heeft_pikhouweel = False   # heb je al een pikhouweel gemaakt?
+# Hoe sterk is je pikhouweel? 0 = nog geen, 1 = stenen, 2 = ijzeren,
+# 3 = gouden, 4 = smaragden, 5 = robijnen. Hoe hoger, hoe meer je kunt hakken.
+pikhouweel_niveau = 0
 
-# Deze mooie, harde blokken kun je ALLEEN met een pikhouweel weghakken.
-# Net als in het echte Minecraft! Zonder pikhouweel lukt het niet.
-# (Steen en kool mogen wél met je hand, anders kun je nooit een pikhouweel maken.)
-PIKHOUWEEL_NODIG = {'diamant', 'robijn', 'smaragd', 'goud', 'ijzer'}
+# Welke pikhouweel hoort bij welk niveau (om netjes op het scherm te laten zien).
+PIKHOUWEEL_NAAM = {
+    1: 'stenen pikhouweel',
+    2: 'ijzeren pikhouweel',
+    3: 'gouden pikhouweel',
+    4: 'smaragden pikhouweel',
+    5: 'robijnen pikhouweel',
+}
+
+# De harde ertsen, met het MINIMALE pikhouweel-niveau dat je nodig hebt.
+# Net als in het echte Minecraft: een sterkere pikhouweel kan meer hakken!
+# (Steen en kool staan er NIET bij: die mag je met je hand, anders kun je
+#  nooit je eerste pikhouweel maken.)
+ERTS_NIVEAU = {
+    'ijzer':   1,   # nodig: stenen pikhouweel (of sterker)
+    'goud':    2,   # nodig: ijzeren pikhouweel (of sterker)
+    'smaragd': 3,   # nodig: gouden pikhouweel (of sterker)
+    'robijn':  4,   # nodig: smaragden pikhouweel (of sterker)
+    'diamant': 5,   # nodig: robijnen pikhouweel
+}
 
 # --- Het geheugen van de wereld ---
 # 'wereld' is het grote telefoonboek: op welke plek (x, y, z) staat welk soort blok?
@@ -322,7 +340,12 @@ speciaal = {}   # plek (x,y,z) -> record met info over het ding dat daar staat
 # Mooie namen om op het scherm te laten zien
 ITEM_NAMEN = {
     'slab': 'Halve blok', 'valluik': 'Valluik', 'trap': 'Traptrede',
-    'hek': 'Hek', 'deur': 'Deur', 'pikhouweel': 'Pikhouweel',
+    'hek': 'Hek', 'deur': 'Deur',
+    'stenen_pikhouweel': 'Stenen pikhouweel',
+    'ijzeren_pikhouweel': 'IJzeren pikhouweel',
+    'gouden_pikhouweel': 'Gouden pikhouweel',
+    'smaragden_pikhouweel': 'Smaragden pikhouweel',
+    'robijnen_pikhouweel': 'Robijnen pikhouweel',
     'rood': 'Rood blok', 'oranje': 'Oranje blok', 'geel': 'Geel blok',
     'groen': 'Groen blok', 'blauw': 'Blauw blok', 'wit': 'Wit blok',
 }
@@ -335,7 +358,13 @@ RECEPTEN = {
     'trap':       {'kosten': {'steen': 6},            'maakt': 4, 'plaatsbaar': True},
     'hek':        {'kosten': {'hout': 4},             'maakt': 4, 'plaatsbaar': True},
     'deur':       {'kosten': {'hout': 6},             'maakt': 1, 'plaatsbaar': True},
-    'pikhouweel': {'kosten': {'steen': 3, 'hout': 2}, 'maakt': 1, 'plaatsbaar': False},
+    # De pikhouweel-ketting: elke pikhouweel kan een mooier erts hakken.
+    # 'niveau' = hoe sterk hij is (zie ERTS_NIVEAU hierboven).
+    'stenen_pikhouweel':    {'kosten': {'steen': 3,   'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 1},
+    'ijzeren_pikhouweel':   {'kosten': {'ijzer': 3,   'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 2},
+    'gouden_pikhouweel':    {'kosten': {'goud': 3,    'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 3},
+    'smaragden_pikhouweel': {'kosten': {'smaragd': 3, 'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 4},
+    'robijnen_pikhouweel':  {'kosten': {'robijn': 3,  'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 5},
     'rood':   {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
     'oranje': {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
     'geel':   {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
@@ -441,9 +470,10 @@ def breek_blok():
     punt = mouse.world_point - mouse.world_normal * 0.5
     pos  = (round(punt.x), round(punt.y), round(punt.z))
     if pos in wereld:
-        # Mooie ertsen zijn keihard: zonder pikhouweel lukt het niet!
-        if wereld[pos] in PIKHOUWEEL_NODIG and not heeft_pikhouweel:
-            toon_melding("Dit is te hard! Maak eerst een pikhouweel (steen + hout).")
+        # Mooie ertsen zijn keihard: je pikhouweel moet sterk genoeg zijn!
+        nodig = ERTS_NIVEAU.get(wereld[pos], 0)
+        if nodig > pikhouweel_niveau:
+            toon_melding(f"Te hard! Hiervoor heb je een {PIKHOUWEEL_NAAM[nodig]} nodig.")
             return
         t = wereld.pop(pos)
         cx, cz = chunk_van_pos(pos[0], pos[2])
@@ -452,7 +482,7 @@ def breek_blok():
         onthul_buren(pos)          # maak de blokken eronder/ernaast aan (geen void)
         # In je rugzak stoppen (water pak je niet op). Met pikhouweel krijg je 2!
         if t != 'water':
-            aantal = 2 if heeft_pikhouweel else 1
+            aantal = 2 if pikhouweel_niveau > 0 else 1
             rugzak[t] = rugzak.get(t, 0) + aantal
             werk_hud_bij()
         geluid_afbreken.play()
@@ -710,8 +740,18 @@ rugzak_hud = Text(text="", position=(-0.87, -0.02), origin=(-0.5, 0.5),
                   scale=0.9, background=True)
 
 # Een pikhouweel-melding rechtsonder (gaat aan zodra je er een hebt gemaakt)
-pikhouweel_hud = Text(text="Pikhouweel: AAN (2x blokken!)",
-                      position=(0.45, -0.42), scale=1.0, background=True, enabled=False)
+pikhouweel_hud = Text(text="", position=(0.40, -0.42), scale=1.0,
+                      background=True, enabled=False)
+
+
+def werk_pikhouweel_hud():
+    """Laat rechtsonder zien welke pikhouweel je nu hebt."""
+    if pikhouweel_niveau == 0:
+        pikhouweel_hud.enabled = False
+    else:
+        pikhouweel_hud.enabled = True
+        naam = PIKHOUWEEL_NAAM[pikhouweel_niveau].capitalize()
+        pikhouweel_hud.text = f"{naam} (2x blokken!)"
 
 # Een melding in het midden (bv. "Te weinig materiaal!"). Verdwijnt vanzelf.
 melding = Text(text="", position=(0, -0.28), origin=(0, 0), scale=1.3,
@@ -830,14 +870,14 @@ materiaal_tekst = Text(parent=maaktafel, text="", position=(-0.72, 0.30), scale=
 # het kunt maken: groen = genoeg materiaal, grijs = te weinig. 2 kolommen.
 recept_knoppen = {}
 for i, naam in enumerate(RECEPTEN):
-    kol = i // 6                       # 0 = linkerkolom, 1 = rechterkolom
-    rij = i % 6
-    kx = -0.25 + kol * 0.5
-    ky = 0.28 - rij * 0.105
+    kol = i // 8                       # 0 = linkerkolom, 1 = rechterkolom
+    rij = i % 8
+    kx = -0.2 + kol * 0.5
+    ky = 0.30 - rij * 0.082
     kosten = "  ".join(f"{n}x {m}" for m, n in RECEPTEN[naam]['kosten'].items())
     knop = Button(parent=maaktafel, text=f"{ITEM_NAMEN[naam]}\n{kosten}",
-                  scale=(0.42, 0.095), position=(kx, ky), color=color.azure)
-    knop.text_entity.scale *= 0.7     # kleinere letters zodat het mooi past
+                  scale=(0.40, 0.075), position=(kx, ky), color=color.azure)
+    knop.text_entity.scale *= 0.6     # kleinere letters zodat het mooi past
     knop.on_click = Func(lambda n=naam: craft(n))
     recept_knoppen[naam] = knop
 
@@ -850,7 +890,7 @@ def kan_betalen(naam):
 def werk_maaktafel_bij():
     """Werkt de maak-tafel bij: je rugzak links, en de knoppen kleuren
     groen (genoeg materiaal) of grijs (te weinig)."""
-    mats = ['hout', 'steen', 'zand', 'aarde', 'kool', 'ijzer', 'goud', 'diamant']
+    mats = ['hout', 'steen', 'kool', 'ijzer', 'goud', 'smaragd', 'robijn', 'diamant']
     materiaal_tekst.text = "Je rugzak:\n" + "\n".join(
         f"{m}: {rugzak.get(m, 0)}" for m in mats)
     for naam, knop in recept_knoppen.items():
@@ -859,7 +899,7 @@ def werk_maaktafel_bij():
 
 def craft(naam):
     """Maakt een ding als je genoeg materiaal hebt."""
-    global heeft_pikhouweel
+    global pikhouweel_niveau
     r = RECEPTEN[naam]
     if not kan_betalen(naam):
         # Niet genoeg materiaal: maar als je er al een hebt, pak je hem vast
@@ -868,15 +908,18 @@ def craft(naam):
         else:
             toon_melding("Te weinig materiaal!")
         return
-    # Materiaal afrekenen en het ding erbij
+    # Materiaal afrekenen
     for m, n in r['kosten'].items():
         rugzak[m] -= n
-    rugzak[naam] = rugzak.get(naam, 0) + r['maakt']
-    if naam == 'pikhouweel':
-        heeft_pikhouweel = True
-        pikhouweel_hud.enabled = True
-    elif r['plaatsbaar']:
-        kies_vast(naam)             # meteen vastpakken om te plaatsen
+    if 'niveau' in r:
+        # Een pikhouweel: je pikhouweel-niveau gaat omhoog (sterkste telt).
+        pikhouweel_niveau = max(pikhouweel_niveau, r['niveau'])
+        werk_pikhouweel_hud()
+    else:
+        # Een gewoon maakbaar ding gaat in je rugzak.
+        rugzak[naam] = rugzak.get(naam, 0) + r['maakt']
+        if r['plaatsbaar']:
+            kies_vast(naam)         # meteen vastpakken om te plaatsen
     geluid_plaatsen.play()
     werk_maaktafel_bij()
     werk_hud_bij()
