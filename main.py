@@ -339,6 +339,7 @@ speciaal = {}   # plek (x,y,z) -> record met info over het ding dat daar staat
 
 # Mooie namen om op het scherm te laten zien
 ITEM_NAMEN = {
+    'maaktafel': 'Maak-tafel',
     'slab': 'Halve blok', 'valluik': 'Valluik', 'trap': 'Traptrede',
     'hek': 'Hek', 'deur': 'Deur',
     'stenen_pikhouweel': 'Stenen pikhouweel',
@@ -353,6 +354,8 @@ ITEM_NAMEN = {
 # De recepten: wat kost het, en hoeveel krijg je ervan?
 # 'is_blok' = True betekent: het is een gewoon blok (geen ding met eigen vorm).
 RECEPTEN = {
+    # De maak-tafel zelf: dit is het ENIGE dat je met je handen kunt maken.
+    'maaktafel':  {'kosten': {'hout': 4},             'maakt': 1, 'plaatsbaar': True},
     'slab':       {'kosten': {'steen': 3},            'maakt': 6, 'plaatsbaar': True},
     'valluik':    {'kosten': {'hout': 4},             'maakt': 3, 'plaatsbaar': True},
     'trap':       {'kosten': {'steen': 6},            'maakt': 4, 'plaatsbaar': True},
@@ -414,6 +417,13 @@ def maak_speciaal_model(naam, pos, richting=0):
                         color=hout, position=(0.45, 0, 0),
                         scale=(0.9, 1.95, 0.18), collider='box')
         return scharnier, paneel
+
+    if naam == 'maaktafel':       # een houten blok met een grijs werkblad erop
+        ouder = Entity(model='cube', texture='white_cube', color=hout,
+                       position=pos, collider='box')
+        Entity(parent=ouder, model='cube', texture='white_cube', color=steen,
+               position=(0, 0.44, 0), scale=(0.9, 0.12, 0.9))
+        return ouder, ouder
 
     return None, None
 
@@ -727,7 +737,7 @@ window.fps_counter.enabled = True
 Text(
     text="Linker muis = slopen / slaan   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op voor monsters! Sla ze met de linkermuis. Hartjes bovenaan = je levens.\n"
-         "C = maak-tafel   F = deur open/dicht\n"
+         "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur open/dicht\n"
          "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje",
     position=(-0.85, 0.47),
     scale=1.1,
@@ -861,8 +871,12 @@ def respawn():
 maaktafel = Entity(parent=camera.ui, enabled=False)
 Entity(parent=maaktafel, model='quad', color=color.rgba(0, 0, 0, 0.8),
        scale=(1.6, 1.0), z=1)
-Text(parent=maaktafel, text="MAAK-TAFEL   -   klik om te maken   -   'c' om te sluiten",
-     position=(0, 0.42), origin=(0, 0), scale=1.2)
+maaktafel_titel = Text(parent=maaktafel, text="", position=(0, 0.43),
+                       origin=(0, 0), scale=1.1)
+
+# Staat de geopende maak-tafel in de 'volledige' stand (bij een echte tafel)?
+# Met je handen kun je namelijk ALLEEN een maak-tafel maken.
+menu_bij_tafel = False
 # Linksboven: wat je in je rugzak hebt
 materiaal_tekst = Text(parent=maaktafel, text="", position=(-0.72, 0.30), scale=1.0)
 
@@ -870,14 +884,14 @@ materiaal_tekst = Text(parent=maaktafel, text="", position=(-0.72, 0.30), scale=
 # het kunt maken: groen = genoeg materiaal, grijs = te weinig. 2 kolommen.
 recept_knoppen = {}
 for i, naam in enumerate(RECEPTEN):
-    kol = i // 8                       # 0 = linkerkolom, 1 = rechterkolom
-    rij = i % 8
+    kol = i // 9                       # 0 = linkerkolom, 1 = rechterkolom
+    rij = i % 9
     kx = -0.2 + kol * 0.5
-    ky = 0.30 - rij * 0.082
+    ky = 0.32 - rij * 0.072
     kosten = "  ".join(f"{n}x {m}" for m, n in RECEPTEN[naam]['kosten'].items())
     knop = Button(parent=maaktafel, text=f"{ITEM_NAMEN[naam]}\n{kosten}",
-                  scale=(0.40, 0.075), position=(kx, ky), color=color.azure)
-    knop.text_entity.scale *= 0.6     # kleinere letters zodat het mooi past
+                  scale=(0.40, 0.066), position=(kx, ky), color=color.azure)
+    knop.text_entity.scale *= 0.55    # kleinere letters zodat het mooi past
     knop.on_click = Func(lambda n=naam: craft(n))
     recept_knoppen[naam] = knop
 
@@ -894,12 +908,20 @@ def werk_maaktafel_bij():
     materiaal_tekst.text = "Je rugzak:\n" + "\n".join(
         f"{m}: {rugzak.get(m, 0)}" for m in mats)
     for naam, knop in recept_knoppen.items():
-        knop.color = color.lime if kan_betalen(naam) else color.gray
+        # Niet bij een tafel? Dan kan alleen de maak-tafel zelf (rest donkergrijs).
+        if not menu_bij_tafel and naam != 'maaktafel':
+            knop.color = color.dark_gray
+        else:
+            knop.color = color.lime if kan_betalen(naam) else color.gray
 
 
 def craft(naam):
     """Maakt een ding als je genoeg materiaal hebt."""
     global pikhouweel_niveau
+    # Met je handen (niet bij een tafel) kun je alleen een maak-tafel maken.
+    if not menu_bij_tafel and naam != 'maaktafel':
+        toon_melding("Hiervoor moet je bij een maak-tafel staan!")
+        return
     r = RECEPTEN[naam]
     if not kan_betalen(naam):
         # Niet genoeg materiaal: maar als je er al een hebt, pak je hem vast
@@ -925,11 +947,28 @@ def craft(naam):
     werk_hud_bij()
 
 
+def bij_maaktafel():
+    """Staat de speler vlakbij een geplaatste maak-tafel?"""
+    for rec in speciaal.values():
+        if rec['naam'] == 'maaktafel':
+            if (rec['model'].world_position - speler.world_position).length() < 4:
+                return True
+    return False
+
+
 def toon_maaktafel():
-    """Opent de maak-tafel en maakt de muis vrij om te klikken."""
+    """Opent de maak-tafel en maakt de muis vrij om te klikken.
+    Bij een echte tafel kun je alles maken; met je handen alleen een tafel."""
+    global menu_bij_tafel
+    menu_bij_tafel = bij_maaktafel()
     maaktafel.enabled = True
     mouse.locked  = False
     mouse.visible = True
+    if menu_bij_tafel:
+        maaktafel_titel.text = "MAAK-TAFEL   -   klik om te maken   -   'c' om te sluiten"
+    else:
+        maaktafel_titel.text = ("MET JE HANDEN   -   je kunt nu alleen een maak-tafel maken.\n"
+                                "Plaats hem en ga ernaast staan voor de rest!   -   'c' om te sluiten")
     werk_maaktafel_bij()
 
 
