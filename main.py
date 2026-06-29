@@ -88,6 +88,11 @@ vastgehouden = None
 
 heeft_pikhouweel = False   # heb je al een pikhouweel gemaakt?
 
+# Deze mooie, harde blokken kun je ALLEEN met een pikhouweel weghakken.
+# Net als in het echte Minecraft! Zonder pikhouweel lukt het niet.
+# (Steen en kool mogen wél met je hand, anders kun je nooit een pikhouweel maken.)
+PIKHOUWEEL_NODIG = {'diamant', 'robijn', 'smaragd', 'goud', 'ijzer'}
+
 # --- Het geheugen van de wereld ---
 # 'wereld' is het grote telefoonboek: op welke plek (x, y, z) staat welk soort blok?
 # Dit zijn alleen getallen, geen 3D-modellen. Heel licht voor de computer.
@@ -436,6 +441,10 @@ def breek_blok():
     punt = mouse.world_point - mouse.world_normal * 0.5
     pos  = (round(punt.x), round(punt.y), round(punt.z))
     if pos in wereld:
+        # Mooie ertsen zijn keihard: zonder pikhouweel lukt het niet!
+        if wereld[pos] in PIKHOUWEEL_NODIG and not heeft_pikhouweel:
+            toon_melding("Dit is te hard! Maak eerst een pikhouweel (steen + hout).")
+            return
         t = wereld.pop(pos)
         cx, cz = chunk_van_pos(pos[0], pos[2])
         chunk_blokken.get((cx, cz), {}).pop(pos, None)
