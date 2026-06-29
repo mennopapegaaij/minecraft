@@ -733,13 +733,10 @@ for _ in range(10):
     soort = random.choice(DIER_SOORTEN)        # kies willekeurig een diersoort
     dieren.append(soort((dx, hoogte_op(dx, dz) + 1.2, dz)))
 
-# --- Monsters (gevaarlijk: ze lopen naar je toe en vallen aan) ---
+# --- Monsters (gevaarlijk: ze komen alleen 's NACHTS en vallen aan) ---
+# We beginnen overdag, dus de lijst is nog leeg. 's Nachts komen ze vanzelf.
 monsters = []
-MAX_MONSTERS = 6          # zoveel monsters mogen er tegelijk zijn
-for _ in range(3):
-    mx = SPAWN_X + random.randint(-25, 25)
-    mz = SPAWN_Z + random.randint(-25, 25)
-    monsters.append(Monster((mx, hoogte_op(mx, mz) + 1.0, mz)))
+MAX_MONSTERS = 6          # zoveel monsters mogen er 's nachts tegelijk zijn
 
 # --- Dag en nacht ---
 lucht = Sky(color=color.rgb(0.5, 0.7, 1.0))
@@ -747,13 +744,14 @@ zon   = DirectionalLight()
 zon.rotation = (45, -45, 0)
 dag_tijd   = 0.0
 DAG_LENGTE = 60.0
+het_is_nacht = False      # is het nu nacht? (dan komen de monsters!)
 
 window.fps_counter.enabled = True
 
 # --- Uitleg op het scherm ---
 Text(
     text="Linker muis = slopen / slaan   Rechter muis = plaatsen   Muiswiel = ander blok\n"
-         "Pas op voor monsters! Sla ze met de linkermuis. Hartjes bovenaan = je levens.\n"
+         "Pas op: 's NACHTS komen er monsters! Sla ze met de linkermuis. Hartjes = je levens.\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur open/dicht\n"
          "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje",
     position=(-0.85, 0.47),
@@ -1016,10 +1014,11 @@ monster_timer  = 0.0      # om af en toe een nieuw monster te laten verschijnen
 def update():
     """Wordt elke frame aangeroepen: dag/nacht, bouwen en stukjes beheren."""
     global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd, monster_timer
+    global het_is_nacht
 
-    # --- Af en toe een nieuw monster laten verschijnen (niet te dichtbij) ---
+    # --- 's Nachts af en toe een nieuw monster laten verschijnen (niet te dichtbij) ---
     monster_timer += time.dt
-    if monster_timer > 5 and len(monsters) < MAX_MONSTERS:
+    if het_is_nacht and monster_timer > 5 and len(monsters) < MAX_MONSTERS:
         monster_timer = 0.0
         hoek = random.uniform(0, 2 * math.pi)
         afst = random.uniform(18, 28)
@@ -1034,6 +1033,15 @@ def update():
     hoogte = math.sin(fractie * 2 * math.pi)
     helder = max(0.1, (hoogte + 1) / 2)
     lucht.color = color.rgb(0.5 * helder, 0.7 * helder, 1.0 * helder)
+
+    # Is het nacht? (de zon staat onder de horizon). Wordt het net dag?
+    # Dan verbranden alle monsters in de zon en is het weer veilig!
+    was_nacht = het_is_nacht
+    het_is_nacht = hoogte < -0.05
+    if was_nacht and not het_is_nacht and monsters:
+        for m in list(monsters):
+            m.ga_dood()
+        toon_melding("De zon komt op! De monsters verbranden in het licht.")
 
     # --- Plafond-check: niet van onderen in een blok springen ---
     # Tijdens het springen schuift de speler recht omhoog. De besturing kijkt
