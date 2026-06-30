@@ -192,23 +192,11 @@ def is_grot(x, y, z, grond_hoogte):
 BUREN = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
 
 
-def is_vol_blok(t):
-    """Is dit bloktype een VOLLE kubus (vult het hele vakje)? Alleen volle
-    kubussen kunnen het buurblok bedekken. Bolletjes, paaltjes en plaatjes
-    laten ruimte over, dus daar moet je het buurblok wél tekenen."""
-    vorm = BLOK_VORM.get(t)
-    if vorm is None:
-        return True                       # gewone terrein-blokken zijn vol
-    model_naam, sch, _omhoog = vorm
-    return model_naam == 'cube' and sch == (1.0, 1.0, 1.0)
-
-
 def blok_zichtbaar(x, y, z):
-    """Een blok hoef je alleen te tekenen als minstens één buur leeg is, of als
-    een buur geen volle kubus is (dan zou er anders een gat ontstaan)."""
+    """Een blok hoef je alleen te tekenen als minstens één buur leeg is.
+    Blokken die helemaal binnenin de berg zitten, zie je toch niet."""
     for dx, dy, dz in BUREN:
-        buur = (x + dx, y + dy, z + dz)
-        if buur not in wereld or not is_vol_blok(wereld[buur]):
+        if (x + dx, y + dy, z + dz) not in wereld:
             return True
     return False
 
@@ -290,13 +278,12 @@ def genereer_chunk_data(cx, cz):
                 elif rng.random() < 0.04:
                     blokken[(x, grond + 1, z)] = 'paddenstoel'  # klein paddenstoeltje
 
-            # Hier en daar een zeldzaam natuur-blok BOVENOP de grond (1 van de 100!).
+            # Hier en daar een zeldzaam natuur-blok op de grond (1 van de 100!).
             # Welke soort hangt van de plek af, zodat overal andere voorkomen.
-            boven = (x, grond + 1, z)
-            if (blokken.get((x, grond, z)) in ('gras', 'aarde', 'zand', 'steen')
-                    and boven not in blokken
-                    and rng.random() < 0.05 and NATUUR_BLOKKEN):
-                blokken[boven] = NATUUR_BLOKKEN[(x * 31 + z * 17) % len(NATUUR_BLOKKEN)]
+            if blokken.get((x, grond, z)) in ('gras', 'aarde', 'zand', 'steen'):
+                if rng.random() < 0.05 and NATUUR_BLOKKEN:
+                    keuze = NATUUR_BLOKKEN[(x * 31 + z * 17) % len(NATUUR_BLOKKEN)]
+                    blokken[(x, grond, z)] = keuze
 
     chunk_blokken[(cx, cz)] = blokken
     # Zet alle blokken ook in het grote telefoonboek
@@ -322,17 +309,14 @@ def bouw_chunk_model(cx, cz):
 
     modellen = []
     for t, posities in per_type.items():
-        # Welke vorm en welk plaatje hoort bij dit bloktype? (Standaard: kubus.)
-        model_naam, sch, omhoog = BLOK_VORM.get(t, ('cube', (1.0, 1.0, 1.0), 0.0))
         ouder = Entity()
-        # Maak tijdelijk voor elk blok de juiste vorm...
+        # Maak tijdelijk voor elk blok een kubus...
         for (x, y, z) in posities:
-            Entity(parent=ouder, model=model_naam,
-                   position=(x, y + omhoog, z), scale=sch)
-        # ...en plak ze daarna samen tot één model. De losse vormen
+            Entity(parent=ouder, model='cube', position=(x, y, z))
+        # ...en plak ze daarna samen tot één model. De losse kubussen
         # worden dan automatisch opgeruimd (auto_destroy).
         ouder.combine(auto_destroy=True)
-        ouder.texture = BLOK_TEXTUUR.get(t, 'white_cube')
+        ouder.texture = 'white_cube'
         ouder.color   = KLEUREN.get(t, color.white)
         if t != 'water':
             ouder.collider = 'mesh'   # zodat je het kunt aanklikken en erop staan
@@ -419,25 +403,6 @@ RECEPTEN['maaktafel']['hand'] = True
 KLEUR_WOORDEN = ['rood', 'oranje', 'geel', 'limoen', 'groen', 'zeegroen',
                  'cyaan', 'azuur', 'blauw', 'paars', 'magenta', 'roze']
 
-# De VORMEN die een blok kan hebben. Elke vorm heeft: een naam, een 3D-model,
-# hoe groot het is (breed, hoog, diep), en hoe ver het omhoog/omlaag staat.
-VORMEN = [
-    ('blok',     'cube',    (1.0,  1.0,  1.0),   0.0),
-    ('halfje',   'cube',    (1.0,  0.5,  1.0),  -0.25),   # halve blok onderaan
-    ('paaltje',  'cube',    (0.4,  1.0,  0.4),   0.0),    # dun en hoog
-    ('plaatje',  'cube',    (1.0,  0.25, 1.0),  -0.375),  # plat tegeltje
-    ('bol',      'sphere',  (0.9,  0.9,  0.9),   0.0),    # ronde bal
-    ('ruit',     'diamond', (0.95, 0.95, 0.95),  0.0),    # diamant-vorm
-]
-
-# De PLAATJES (texturen) die op een blok kunnen zitten. Allemaal goed te kleuren.
-TEXTUREN = ['white_cube', 'brick', 'grass_tintable',
-            'noise', 'perlin_noise', 'heightmap_1']
-
-# Hier onthouden we per blok welke vorm en welk plaatje het heeft.
-BLOK_VORM    = {}   # naam -> (model, schaal, omhoog)
-BLOK_TEXTUUR = {}   # naam -> plaatje (textuur)
-
 
 def _kleur_van_hoek(hoek, verzadiging, helderheid):
     """Maakt een kleur van een 'kleur-hoek' (0..1) op het kleurenwiel."""
@@ -453,8 +418,7 @@ def _kleur_woord(hoek):
 
 def maak_veel_blokken(voorvoegsel, aantal, verzadiging, helderheid,
                       in_natuur=False, recept=None):
-    """Maakt 'aantal' blokken die ALLEMAAL verschillend zijn: elk een eigen
-    kleur, een eigen vorm én een eigen plaatje. Geeft de lijst met namen terug.
+    """Maakt 'aantal' gekleurde blokken. Geeft de lijst met hun namen terug.
     - voorvoegsel: korte code voor de naam (bv 'n', 'h', 't')
     - in_natuur:   True = je vindt het blok in de wereld
     - recept:      None = geen recept; anders een dict met kosten + of het
@@ -464,16 +428,9 @@ def maak_veel_blokken(voorvoegsel, aantal, verzadiging, helderheid,
         # De 'gulden hoek' verdeelt de kleuren mooi over het hele kleurenwiel,
         # zodat blokken die na elkaar komen toch heel verschillend van kleur zijn.
         hoek = (i * 0.61803398875) % 1.0
-        key  = f"{voorvoegsel}{i + 1}"
-        # Kies een vorm en een plaatje. Door slim te tellen krijg je heel veel
-        # verschillende combinaties (vorm x plaatje x kleur).
-        vorm = VORMEN[i % len(VORMEN)]
-        tex  = TEXTUREN[(i // len(VORMEN)) % len(TEXTUREN)]
-        KLEUREN[key]      = _kleur_van_hoek(hoek, verzadiging, helderheid)
-        BLOK_VORM[key]    = (vorm[1], vorm[2], vorm[3])
-        BLOK_TEXTUUR[key] = tex
-        # De naam vertelt de vorm én de kleur, zodat je er goed op kunt zoeken.
-        ITEM_NAMEN[key] = f"{_kleur_woord(hoek).capitalize()} {vorm[0]} {i + 1}"
+        key = f"{voorvoegsel}{i + 1}"
+        KLEUREN[key]    = _kleur_van_hoek(hoek, verzadiging, helderheid)
+        ITEM_NAMEN[key] = f"{_kleur_woord(hoek).capitalize()} {i + 1}"
         if in_natuur:
             BLOK_KEUZES.append(key)            # je kunt het vinden en plaatsen
         if recept is not None:
