@@ -1,9 +1,11 @@
 from ursina import *
 from ursina.prefabs.first_person_controller import FirstPersonController
+from ursina.prefabs.input_field import InputField   # het typ-vakje (zoekbalk)
 from perlin_noise import PerlinNoise
 import random
 import math
 import collections
+import colorsys   # om mooie kleuren te maken (van kleur-hoek naar rood/groen/blauw)
 
 app = Ursina()
 
@@ -276,6 +278,13 @@ def genereer_chunk_data(cx, cz):
                 elif rng.random() < 0.04:
                     blokken[(x, grond + 1, z)] = 'paddenstoel'  # klein paddenstoeltje
 
+            # Hier en daar een zeldzaam natuur-blok op de grond (1 van de 100!).
+            # Welke soort hangt van de plek af, zodat overal andere voorkomen.
+            if blokken.get((x, grond, z)) in ('gras', 'aarde', 'zand', 'steen'):
+                if rng.random() < 0.05 and NATUUR_BLOKKEN:
+                    keuze = NATUUR_BLOKKEN[(x * 31 + z * 17) % len(NATUUR_BLOKKEN)]
+                    blokken[(x, grond, z)] = keuze
+
     chunk_blokken[(cx, cz)] = blokken
     # Zet alle blokken ook in het grote telefoonboek
     for pos, t in blokken.items():
@@ -375,6 +384,82 @@ RECEPTEN = {
     'blauw':  {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
     'wit':    {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
 }
+
+# 'maaktafel' mag je met je HANDEN maken (zonder tafel). De rest niet.
+RECEPTEN['maaktafel']['hand'] = True
+
+
+# ============================================================================
+#  DE BLOKKEN-FABRIEK: honderden blokken automatisch maken! 🎨
+# ----------------------------------------------------------------------------
+#  - 100 NATUUR-blokken: die vind je in de wereld (graven om te verzamelen).
+#  - 300 HAND-blokken:   die maak je met je handen (zonder maak-tafel).
+#  - 400 TAFEL-blokken:  die maak je alleen bij een maak-tafel.
+#  Elk blok krijgt een eigen kleur en een eigen naam, zodat je ze kunt
+#  herkennen en in de zoekbalk kunt opzoeken.
+# ============================================================================
+
+# Een paar kleur-woorden om de blokken een herkenbare naam te geven.
+KLEUR_WOORDEN = ['rood', 'oranje', 'geel', 'limoen', 'groen', 'zeegroen',
+                 'cyaan', 'azuur', 'blauw', 'paars', 'magenta', 'roze']
+
+
+def _kleur_van_hoek(hoek, verzadiging, helderheid):
+    """Maakt een kleur van een 'kleur-hoek' (0..1) op het kleurenwiel."""
+    r, g, b = colorsys.hsv_to_rgb(hoek, verzadiging, helderheid)
+    return color.rgb(r, g, b)   # color.rgb wil waarden van 0 tot 1!
+
+
+def _kleur_woord(hoek):
+    """Geeft het kleur-woord dat bij deze kleur-hoek hoort (rood, groen, ...)."""
+    i = int(hoek * len(KLEUR_WOORDEN)) % len(KLEUR_WOORDEN)
+    return KLEUR_WOORDEN[i]
+
+
+def maak_veel_blokken(voorvoegsel, aantal, verzadiging, helderheid,
+                      in_natuur=False, recept=None):
+    """Maakt 'aantal' gekleurde blokken. Geeft de lijst met hun namen terug.
+    - voorvoegsel: korte code voor de naam (bv 'n', 'h', 't')
+    - in_natuur:   True = je vindt het blok in de wereld
+    - recept:      None = geen recept; anders een dict met kosten + of het
+                   met de hand mag (zonder maak-tafel)."""
+    namen = []
+    for i in range(aantal):
+        # De 'gulden hoek' verdeelt de kleuren mooi over het hele kleurenwiel,
+        # zodat blokken die na elkaar komen toch heel verschillend van kleur zijn.
+        hoek = (i * 0.61803398875) % 1.0
+        key = f"{voorvoegsel}{i + 1}"
+        KLEUREN[key]    = _kleur_van_hoek(hoek, verzadiging, helderheid)
+        ITEM_NAMEN[key] = f"{_kleur_woord(hoek).capitalize()} {i + 1}"
+        if in_natuur:
+            BLOK_KEUZES.append(key)            # je kunt het vinden en plaatsen
+        if recept is not None:
+            mat = recept['mats'][i % len(recept['mats'])]
+            RECEPTEN[key] = {'kosten': {mat: recept['kosten']}, 'maakt': 4,
+                             'plaatsbaar': True, 'is_blok': True,
+                             'hand': recept['hand']}
+        namen.append(key)
+    return namen
+
+
+# 100 natuur-blokken: aardige, wat zachtere kleuren (zoals echte natuur).
+NATUUR_BLOKKEN = maak_veel_blokken('n', 100, verzadiging=0.45, helderheid=0.60,
+                                   in_natuur=True)
+
+# 300 hand-blokken: felle kleuren. Maak je met je HANDEN van 1 simpel blok.
+HAND_BLOKKEN = maak_veel_blokken(
+    'h', 300, verzadiging=0.75, helderheid=0.95,
+    recept={'mats': ['steen', 'aarde', 'zand', 'hout', 'kool'],
+            'kosten': 1, 'hand': True})
+
+# 400 tafel-blokken: stevige kleuren. Maak je alleen BIJ een maak-tafel.
+TAFEL_BLOKKEN = maak_veel_blokken(
+    't', 400, verzadiging=0.85, helderheid=0.78,
+    recept={'mats': ['steen', 'aarde', 'zand', 'hout', 'kool', 'klei', 'zandsteen'],
+            'kosten': 2, 'hand': False})
+
+print(f"Blokken gemaakt: {len(NATUUR_BLOKKEN)} natuur, "
+      f"{len(HAND_BLOKKEN)} hand, {len(TAFEL_BLOKKEN)} tafel.")
 
 
 def maak_speciaal_model(naam, pos, richting=0):
@@ -811,11 +896,16 @@ def is_item(naam):
 def beschikbaar():
     """Alle dingen die je in je rugzak hebt om te plaatsen, in een nette
     vaste volgorde. (De pikhouweel zit er niet bij, die plaats je niet.)"""
-    # Gewone blokken staan al in BLOK_KEUZES; hier voegen we alleen de
-    # zelfgemaakte dingen-met-vorm toe (deur, slab, trap, hek, valluik).
-    volgorde = BLOK_KEUZES + [n for n in RECEPTEN
-                             if RECEPTEN[n]['plaatsbaar'] and not RECEPTEN[n].get('is_blok')]
-    return [n for n in volgorde if rugzak.get(n, 0) > 0]
+    # Gewone/natuur-blokken (BLOK_KEUZES) + alles wat je kunt maken en plaatsen
+    # (gekleurde blokken, deuren, slabs...). Dubbele namen halen we eruit.
+    volgorde = list(BLOK_KEUZES) + [n for n in RECEPTEN if RECEPTEN[n]['plaatsbaar']]
+    gezien = set()
+    uniek = []
+    for n in volgorde:
+        if n not in gezien:
+            gezien.add(n)
+            uniek.append(n)
+    return [n for n in uniek if rugzak.get(n, 0) > 0]
 
 
 def werk_hud_bij():
@@ -889,34 +979,54 @@ def respawn():
     werk_hartjes_bij()
 
 
-# --- Maak-tafel (open en sluit met de toets 'c') ---
-# Hier maak je nieuwe dingen van de blokken die je verzameld hebt.
+# --- Maak-tafel (open met 'c', sluit met Escape of de Sluiten-knop) ---
+# Hier maak je nieuwe dingen. Omdat er honderden blokken zijn, gebruiken we
+# een ZOEKBALK (typ een naam) en PAGINA'S (blader met < Vorige / Volgende >).
 maaktafel = Entity(parent=camera.ui, enabled=False)
-Entity(parent=maaktafel, model='quad', color=color.rgba(0, 0, 0, 0.8),
-       scale=(1.6, 1.0), z=1)
-maaktafel_titel = Text(parent=maaktafel, text="", position=(0, 0.43),
-                       origin=(0, 0), scale=1.1)
+Entity(parent=maaktafel, model='quad', color=color.rgba(0, 0, 0, 0.88),
+       scale=(1.85, 1.0), z=1)
+maaktafel_titel = Text(parent=maaktafel, text="", position=(0, 0.45),
+                       origin=(0, 0), scale=1.0)
 
 # Staat de geopende maak-tafel in de 'volledige' stand (bij een echte tafel)?
 # Met je handen kun je namelijk ALLEEN een maak-tafel maken.
 menu_bij_tafel = False
-# Linksboven: wat je in je rugzak hebt
-materiaal_tekst = Text(parent=maaktafel, text="", position=(-0.72, 0.30), scale=1.0)
 
-# Voor elk recept een knop (naam + kosten erop). De knopkleur laat zien of je
-# het kunt maken: groen = genoeg materiaal, grijs = te weinig. 2 kolommen.
-recept_knoppen = {}
-for i, naam in enumerate(RECEPTEN):
-    kol = i // 9                       # 0 = linkerkolom, 1 = rechterkolom
+# De zoekbalk: klik erin en typ om blokken te zoeken (bv 'groen' of '42').
+Text(parent=maaktafel, text="Zoek:", position=(-0.62, 0.37), origin=(-0.5, 0), scale=1.0)
+zoekveld = InputField(parent=maaktafel, position=(-0.30, 0.37), scale=(0.55, 0.05))
+
+# Linksonder: wat je in je rugzak hebt (het materiaal om mee te maken)
+materiaal_tekst = Text(parent=maaktafel, text="", position=(-0.90, 0.22),
+                       origin=(-0.5, 0.5), scale=0.8)
+
+# 18 knop-'vakjes' (2 kolommen van 9). Ze worden steeds opnieuw gevuld met de
+# blokken van de pagina die je nu bekijkt. Zo heb je er maar 18 nodig!
+KNOPPEN_PER_PAGINA = 18
+recept_slots = []
+for i in range(KNOPPEN_PER_PAGINA):
+    kol = i // 9
     rij = i % 9
-    kx = -0.2 + kol * 0.5
-    ky = 0.32 - rij * 0.072
-    kosten = "  ".join(f"{n}x {m}" for m, n in RECEPTEN[naam]['kosten'].items())
-    knop = Button(parent=maaktafel, text=f"{ITEM_NAMEN[naam]}\n{kosten}",
-                  scale=(0.40, 0.066), position=(kx, ky), color=color.azure)
-    knop.text_entity.scale *= 0.55    # kleinere letters zodat het mooi past
-    knop.on_click = Func(lambda n=naam: craft(n))
-    recept_knoppen[naam] = knop
+    kx = -0.02 + kol * 0.45
+    ky = 0.30 - rij * 0.072
+    knop = Button(parent=maaktafel, text="-", scale=(0.42, 0.066),
+                  position=(kx, ky), color=color.azure)
+    knop.text_entity.scale *= 0.55
+    recept_slots.append(knop)
+
+# De pagina-knoppen en de teller onderaan
+huidige_pagina = 0       # welke pagina kijk je nu?
+gefilterd      = []      # de namen die nu (na zoeken/stand) in het menu passen
+vorige_zoek    = ""      # om te merken dat je iets nieuws hebt getypt
+
+pagina_tekst = Text(parent=maaktafel, text="", position=(0, -0.37),
+                    origin=(0, 0), scale=0.9)
+vorige_knop   = Button(parent=maaktafel, text="< Vorige",   scale=(0.22, 0.06),
+                       position=(-0.28, -0.44), color=color.orange)
+volgende_knop = Button(parent=maaktafel, text="Volgende >", scale=(0.22, 0.06),
+                       position=(0.28, -0.44), color=color.orange)
+sluit_knop    = Button(parent=maaktafel, text="Sluiten (Esc)", scale=(0.22, 0.06),
+                       position=(0.70, -0.44), color=color.red)
 
 
 def kan_betalen(naam):
@@ -924,25 +1034,79 @@ def kan_betalen(naam):
     return all(rugzak.get(m, 0) >= n for m, n in RECEPTEN[naam]['kosten'].items())
 
 
-def werk_maaktafel_bij():
-    """Werkt de maak-tafel bij: je rugzak links, en de knoppen kleuren
-    groen (genoeg materiaal) of grijs (te weinig)."""
+def filter_recepten():
+    """Maakt de lijst met blokken die nu in het menu passen: ze moeten bij de
+    huidige stand horen (hand of tafel) én bij wat je in de zoekbalk typte."""
+    global gefilterd
+    zoek = zoekveld.text.lower().strip()
+    namen = []
+    for naam in RECEPTEN:
+        # Niet bij een tafel? Dan zie je alleen de dingen die je met de hand mag.
+        if not menu_bij_tafel and not RECEPTEN[naam].get('hand'):
+            continue
+        toon = ITEM_NAMEN.get(naam, naam).lower()
+        if zoek and zoek not in toon:
+            continue
+        namen.append(naam)
+    gefilterd = namen
+
+
+def aantal_paginas():
+    """Hoeveel pagina's zijn er nodig voor alle gevonden blokken?"""
+    return max(1, (len(gefilterd) + KNOPPEN_PER_PAGINA - 1) // KNOPPEN_PER_PAGINA)
+
+
+def toon_pagina():
+    """Vult de 18 vakjes met de blokken van de huidige pagina."""
+    global huidige_pagina
+    huidige_pagina = max(0, min(huidige_pagina, aantal_paginas() - 1))
+    start = huidige_pagina * KNOPPEN_PER_PAGINA
+    deel  = gefilterd[start:start + KNOPPEN_PER_PAGINA]
+    for i, knop in enumerate(recept_slots):
+        if i < len(deel):
+            naam = deel[i]
+            kosten = "  ".join(f"{n}x {m}" for m, n in RECEPTEN[naam]['kosten'].items())
+            knop.text     = f"{ITEM_NAMEN.get(naam, naam)}\n{kosten}"
+            knop.color    = color.lime if kan_betalen(naam) else color.gray
+            knop.on_click = Func(craft, naam)
+            knop.enabled  = True
+        else:
+            knop.enabled = False        # leeg vakje: verbergen
+    pagina_tekst.text = (f"Pagina {huidige_pagina + 1} / {aantal_paginas()}"
+                         f"     ({len(gefilterd)} blokken gevonden)")
+    # En links je rugzak-materiaal laten zien
     mats = ['hout', 'steen', 'kool', 'ijzer', 'goud', 'smaragd', 'robijn', 'diamant']
     materiaal_tekst.text = "Je rugzak:\n" + "\n".join(
         f"{m}: {rugzak.get(m, 0)}" for m in mats)
-    for naam, knop in recept_knoppen.items():
-        # Niet bij een tafel? Dan kan alleen de maak-tafel zelf (rest donkergrijs).
-        if not menu_bij_tafel and naam != 'maaktafel':
-            knop.color = color.dark_gray
-        else:
-            knop.color = color.lime if kan_betalen(naam) else color.gray
+
+
+def werk_maaktafel_bij():
+    """Filtert opnieuw en laat de juiste pagina zien."""
+    filter_recepten()
+    toon_pagina()
+
+
+def volgende_pagina():
+    global huidige_pagina
+    huidige_pagina += 1
+    toon_pagina()
+
+
+def vorige_pagina():
+    global huidige_pagina
+    huidige_pagina -= 1
+    toon_pagina()
+
+
+volgende_knop.on_click = volgende_pagina
+vorige_knop.on_click   = vorige_pagina
 
 
 def craft(naam):
     """Maakt een ding als je genoeg materiaal hebt."""
     global pikhouweel_niveau
-    # Met je handen (niet bij een tafel) kun je alleen een maak-tafel maken.
-    if not menu_bij_tafel and naam != 'maaktafel':
+    # Niet bij een tafel? Dan kun je alleen 'hand'-dingen maken.
+    if not menu_bij_tafel and not RECEPTEN[naam].get('hand'):
         toon_melding("Hiervoor moet je bij een maak-tafel staan!")
         return
     r = RECEPTEN[naam]
@@ -982,16 +1146,19 @@ def bij_maaktafel():
 def toon_maaktafel():
     """Opent de maak-tafel en maakt de muis vrij om te klikken.
     Bij een echte tafel kun je alles maken; met je handen alleen een tafel."""
-    global menu_bij_tafel
+    global menu_bij_tafel, huidige_pagina, vorige_zoek
     menu_bij_tafel = bij_maaktafel()
     maaktafel.enabled = True
     mouse.locked  = False
     mouse.visible = True
+    zoekveld.text = ""           # zoekbalk leegmaken
+    vorige_zoek   = ""
+    huidige_pagina = 0           # weer op de eerste pagina beginnen
     if menu_bij_tafel:
-        maaktafel_titel.text = "MAAK-TAFEL   -   klik om te maken   -   'c' om te sluiten"
+        maaktafel_titel.text = "MAAK-TAFEL   -   klik om te maken   -   typ in de zoekbalk om te zoeken"
     else:
-        maaktafel_titel.text = ("MET JE HANDEN   -   je kunt nu alleen een maak-tafel maken.\n"
-                                "Plaats hem en ga ernaast staan voor de rest!   -   'c' om te sluiten")
+        maaktafel_titel.text = ("MET JE HANDEN   -   nu kun je hand-blokken en een maak-tafel maken.\n"
+                                "Plaats een maak-tafel en ga ernaast staan voor ALLE blokken!")
     werk_maaktafel_bij()
 
 
@@ -1000,6 +1167,9 @@ def verberg_maaktafel():
     maaktafel.enabled = False
     mouse.locked  = True
     mouse.visible = False
+
+
+sluit_knop.on_click = verberg_maaktafel
 
 
 def toggle_deur():
@@ -1022,7 +1192,13 @@ monster_timer  = 0.0      # om af en toe een nieuw monster te laten verschijnen
 def update():
     """Wordt elke frame aangeroepen: dag/nacht, bouwen en stukjes beheren."""
     global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd, monster_timer
-    global het_is_nacht
+    global het_is_nacht, vorige_zoek, huidige_pagina
+
+    # --- Zoekbalk: typ je iets nieuws? Dan meteen opnieuw zoeken (pagina 1) ---
+    if maaktafel.enabled and zoekveld.text != vorige_zoek:
+        vorige_zoek = zoekveld.text
+        huidige_pagina = 0
+        werk_maaktafel_bij()
 
     # --- 's Nachts af en toe een nieuw monster laten verschijnen (niet te dichtbij) ---
     monster_timer += time.dt
@@ -1119,16 +1295,29 @@ def update():
 
 
 def input(toets):
-    # De maak-tafel openen of sluiten
-    if toets == 'c':
-        verberg_maaktafel() if maaktafel.enabled else toon_maaktafel()
+    # Escape: het menu sluiten als het open is, anders het spel stoppen.
+    if toets == 'escape':
+        if maaktafel.enabled:
+            verberg_maaktafel()
+        else:
+            quit()
         return
 
-    # Alleen breken/plaatsen/deur als de maak-tafel dicht is
-    if not maaktafel.enabled:
-        if toets == 'left mouse down':  linker_klik()
-        if toets == 'right mouse down': plaats_blok()
-        if toets == 'f':                toggle_deur()
+    # Als de maak-tafel OPEN is, doen we verder niets met toetsen. Zo kun je
+    # rustig in de zoekbalk typen (ook letters als 'c' en cijfers) zonder dat
+    # er per ongeluk iets anders gebeurt.
+    if maaktafel.enabled:
+        return
+
+    # 'c' opent de maak-tafel
+    if toets == 'c':
+        toon_maaktafel()
+        return
+
+    # Breken / plaatsen / deur
+    if toets == 'left mouse down':  linker_klik()
+    if toets == 'right mouse down': plaats_blok()
+    if toets == 'f':                toggle_deur()
 
     # Met het muiswiel door de blokken die je HEBT bladeren
     if toets == 'scroll up':   blader(1)
@@ -1144,8 +1333,6 @@ def input(toets):
     if toets == 'f3':
         debug_tekst.enabled        = not debug_tekst.enabled
         window.fps_counter.enabled = debug_tekst.enabled
-    if toets == 'escape':
-        quit()
 
 
 app.run()
