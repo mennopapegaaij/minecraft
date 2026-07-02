@@ -37,7 +37,6 @@ TEXTUUR_DEFS = [
     {'naam': 'mc_goud_erts',       'stijl': 'ore', 'c1': (128, 128, 128), 'c2': (240, 210, 70)},
     {'naam': 'mc_diamant_erts',    'stijl': 'ore', 'c1': (128, 128, 128), 'c2': (110, 230, 230)},
     {'naam': 'mc_smaragd_erts',    'stijl': 'ore', 'c1': (128, 128, 128), 'c2': (40, 200, 100)},
-    {'naam': 'mc_robijn_erts',     'stijl': 'ore', 'c1': (128, 128, 128), 'c2': (220, 40, 60)},
     {'naam': 'mc_lapis_erts',      'stijl': 'ore', 'c1': (128, 128, 128), 'c2': (40, 70, 200)},
     {'naam': 'mc_redstone_erts',   'stijl': 'ore', 'c1': (128, 128, 128), 'c2': (230, 30, 30)},
 
@@ -71,7 +70,6 @@ TEXTUUR_DEFS = [
     {'naam': 'mc_smaragd_blok', 'stijl': 'gem',   'c1': (40, 200, 100), 'c2': (95, 225, 145)},
     {'naam': 'mc_kool_blok',    'stijl': 'speckle','c1': (35, 35, 38),  'var': 8},
     {'naam': 'mc_lapis_blok',   'stijl': 'speckle','c1': (40, 70, 200), 'var': 18},
-    {'naam': 'mc_robijn_blok',  'stijl': 'gem',   'c1': (210, 40, 60),  'c2': (240, 90, 110)},
 
     # --- Planten en eten ---
     {'naam': 'mc_pompoen',          'stijl': 'pumpkin', 'c1': (225, 135, 30),'c2': (180, 100, 20)},
@@ -98,7 +96,7 @@ BESTAANDE_TEXTUREN = {
     'zandsteen': 'mc_zandsteen', 'mos': 'mc_mos_steen',
     'paddenstoel': 'mc_paddenstoel_rood', 'pompoen': 'mc_pompoen', 'lava': 'mc_lava',
     'goud': 'mc_goud_erts', 'diamant': 'mc_diamant_erts', 'ijzer': 'mc_ijzer_erts',
-    'smaragd': 'mc_smaragd_erts', 'robijn': 'mc_robijn_erts', 'kool': 'mc_kool_erts',
+    'smaragd': 'mc_smaragd_erts', 'kool': 'mc_kool_erts',
 }
 
 
@@ -129,7 +127,6 @@ NIEUWE_BLOKKEN = [
     {'key': 'mc_smaragd_blok',    'naam': 'Smaragdblok',        'kosten': {'smaragd': 4}},
     {'key': 'mc_kool_blok',       'naam': 'Kolenblok',          'kosten': {'kool': 4}},
     {'key': 'mc_lapis_blok',      'naam': 'Lapisblok',          'kosten': {'steen': 4}},
-    {'key': 'mc_robijn_blok',     'naam': 'Robijnblok',         'kosten': {'robijn': 4}},
     {'key': 'mc_meloen',          'naam': 'Meloen',             'kosten': {'blad': 2}},
     {'key': 'mc_hooibaal',        'naam': 'Hooibaal',           'kosten': {'blad': 2}},
     {'key': 'mc_spons',           'naam': 'Spons',              'kosten': {'zand': 2}},

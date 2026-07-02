@@ -51,7 +51,6 @@ KLEUREN = {
     'diamant':  color.rgb(110/255, 230/255, 230/255),
     'ijzer':    color.rgb(200/255, 200/255, 205/255),
     'smaragd':  color.rgb( 40/255, 200/255, 100/255),
-    'robijn':   color.rgb(220/255,  40/255,  60/255),
     'kool':     color.rgb( 45/255,  45/255,  45/255),
     'lava':     color.rgb(240/255, 100/255,  20/255),
     'pompoen':  color.rgb(230/255, 140/255,  30/255),
@@ -66,7 +65,7 @@ KLEUREN = {
 # De blokken die je kunt vasthouden en plaatsen (met muiswiel of cijfertoetsen)
 BLOK_KEUZES = ['gras', 'aarde', 'steen', 'zand', 'hout', 'planken', 'blad',
                'baksteen', 'glas', 'sneeuw', 'goud', 'diamant', 'ijzer',
-               'smaragd', 'robijn', 'kool', 'lava', 'pompoen', 'mos',
+               'smaragd', 'kool', 'lava', 'pompoen', 'mos',
                'klei', 'zandsteen', 'paddenstoel']
 
 WATER_NIVEAU = 6          # Tot welke hoogte staat er water in de lage plekken
@@ -79,7 +78,7 @@ rugzak = {}
 vastgehouden = None
 
 # Hoe sterk is je pikhouweel? 0 = nog geen, 1 = stenen, 2 = ijzeren,
-# 3 = gouden, 4 = smaragden, 5 = robijnen. Hoe hoger, hoe meer je kunt hakken.
+# 3 = gouden, 4 = smaragden. Hoe hoger, hoe meer je kunt hakken.
 pikhouweel_niveau = 0
 
 # Welke pikhouweel hoort bij welk niveau (om netjes op het scherm te laten zien).
@@ -88,7 +87,6 @@ PIKHOUWEEL_NAAM = {
     2: 'ijzeren pikhouweel',
     3: 'gouden pikhouweel',
     4: 'smaragden pikhouweel',
-    5: 'robijnen pikhouweel',
 }
 
 # De harde ertsen, met het MINIMALE pikhouweel-niveau dat je nodig hebt.
@@ -99,8 +97,7 @@ ERTS_NIVEAU = {
     'ijzer':   1,   # nodig: stenen pikhouweel (of sterker)
     'goud':    2,   # nodig: ijzeren pikhouweel (of sterker)
     'smaragd': 3,   # nodig: gouden pikhouweel (of sterker)
-    'robijn':  4,   # nodig: smaragden pikhouweel (of sterker)
-    'diamant': 5,   # nodig: robijnen pikhouweel
+    'diamant': 4,   # nodig: smaragden pikhouweel
 }
 
 # --- Het geheugen van de wereld ---
@@ -136,7 +133,6 @@ def steen_of_erts(x, y, z):
     rng = random.Random((x * 73856093) ^ (y * 19349663) ^ (z * 83492791) ^ WERELD_ZAAD)
     r = rng.random()
     if y <= -2 and r < 0.012:  return 'diamant'   # heel diep en heel zeldzaam
-    if y <=  0 and r < 0.022:  return 'robijn'
     if y <=  2 and r < 0.034:  return 'smaragd'
     if y <=  4 and r < 0.054:  return 'goud'
     if y <= 12 and r < 0.090:  return 'ijzer'
@@ -345,7 +341,6 @@ ITEM_NAMEN = {
     'ijzeren_pikhouweel': 'IJzeren pikhouweel',
     'gouden_pikhouweel': 'Gouden pikhouweel',
     'smaragden_pikhouweel': 'Smaragden pikhouweel',
-    'robijnen_pikhouweel': 'Robijnen pikhouweel',
 }
 
 # De recepten: wat kost het, en hoeveel krijg je ervan?
@@ -364,7 +359,6 @@ RECEPTEN = {
     'ijzeren_pikhouweel':   {'kosten': {'ijzer': 3,   'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 2},
     'gouden_pikhouweel':    {'kosten': {'goud': 3,    'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 3},
     'smaragden_pikhouweel': {'kosten': {'smaragd': 3, 'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 4},
-    'robijnen_pikhouweel':  {'kosten': {'robijn': 3,  'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 5},
 }
 
 # 'maaktafel' mag je met je HANDEN maken (zonder tafel). De rest niet.
@@ -1025,7 +1019,7 @@ def toon_pagina():
     pagina_tekst.text = (f"Pagina {huidige_pagina + 1} / {aantal_paginas()}"
                          f"     ({len(gefilterd)} blokken gevonden)")
     # En links je rugzak-materiaal laten zien
-    mats = ['hout', 'steen', 'kool', 'ijzer', 'goud', 'smaragd', 'robijn', 'diamant']
+    mats = ['hout', 'steen', 'kool', 'ijzer', 'goud', 'smaragd', 'diamant', 'klei']
     materiaal_tekst.text = "Je rugzak:\n" + "\n".join(
         f"{m}: {rugzak.get(m, 0)}" for m in mats)
 
