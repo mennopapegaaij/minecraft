@@ -6,7 +6,6 @@ from perlin_noise import PerlinNoise
 import random
 import math
 import collections
-import colorsys   # om mooie kleuren te maken (van kleur-hoek naar rood/groen/blauw)
 
 app = Ursina()
 
@@ -57,19 +56,10 @@ KLEUREN = {
     'lava':     color.rgb(240/255, 100/255,  20/255),
     'pompoen':  color.rgb(230/255, 140/255,  30/255),
     'mos':      color.rgb( 60/255, 110/255,  40/255),
-    'paars':    color.rgb(140/255,  60/255, 200/255),
-    'roze':     color.rgb(240/255, 140/255, 200/255),
-    # Nieuwe natuur-blokken die je in de wereld kunt vinden
+    # Natuur-blokken die je in de wereld kunt vinden
     'klei':        color.rgb(160/255, 165/255, 175/255),
     'zandsteen':   color.rgb(220/255, 205/255, 160/255),
     'paddenstoel': color.rgb(200/255,  50/255,  50/255),
-    # Gekleurde blokken die je zelf maakt in de maak-tafel
-    'rood':     color.rgb(220/255,  50/255,  50/255),
-    'oranje':   color.rgb(240/255, 140/255,  40/255),
-    'geel':     color.rgb(240/255, 220/255,  60/255),
-    'groen':    color.rgb( 70/255, 190/255,  70/255),
-    'blauw':    color.rgb( 60/255, 110/255, 220/255),
-    'wit':      color.rgb(240/255, 240/255, 245/255),
     'water':    color.rgba(45/255, 110/255, 200/255, 0.6),
 }
 
@@ -77,8 +67,7 @@ KLEUREN = {
 BLOK_KEUZES = ['gras', 'aarde', 'steen', 'zand', 'hout', 'planken', 'blad',
                'baksteen', 'glas', 'sneeuw', 'goud', 'diamant', 'ijzer',
                'smaragd', 'robijn', 'kool', 'lava', 'pompoen', 'mos',
-               'paars', 'roze', 'klei', 'zandsteen', 'paddenstoel',
-               'rood', 'oranje', 'geel', 'groen', 'blauw', 'wit']
+               'klei', 'zandsteen', 'paddenstoel']
 
 WATER_NIVEAU = 6          # Tot welke hoogte staat er water in de lage plekken
 
@@ -279,13 +268,6 @@ def genereer_chunk_data(cx, cz):
                 elif rng.random() < 0.04:
                     blokken[(x, grond + 1, z)] = 'paddenstoel'  # klein paddenstoeltje
 
-            # Hier en daar een zeldzaam natuur-blok op de grond (1 van de 100!).
-            # Welke soort hangt van de plek af, zodat overal andere voorkomen.
-            if blokken.get((x, grond, z)) in ('gras', 'aarde', 'zand', 'steen'):
-                if rng.random() < 0.05 and NATUUR_BLOKKEN:
-                    keuze = NATUUR_BLOKKEN[(x * 31 + z * 17) % len(NATUUR_BLOKKEN)]
-                    blokken[(x, grond, z)] = keuze
-
     chunk_blokken[(cx, cz)] = blokken
     # Zet alle blokken ook in het grote telefoonboek
     for pos, t in blokken.items():
@@ -364,8 +346,6 @@ ITEM_NAMEN = {
     'gouden_pikhouweel': 'Gouden pikhouweel',
     'smaragden_pikhouweel': 'Smaragden pikhouweel',
     'robijnen_pikhouweel': 'Robijnen pikhouweel',
-    'rood': 'Rood blok', 'oranje': 'Oranje blok', 'geel': 'Geel blok',
-    'groen': 'Groen blok', 'blauw': 'Blauw blok', 'wit': 'Wit blok',
 }
 
 # De recepten: wat kost het, en hoeveel krijg je ervan?
@@ -385,89 +365,10 @@ RECEPTEN = {
     'gouden_pikhouweel':    {'kosten': {'goud': 3,    'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 3},
     'smaragden_pikhouweel': {'kosten': {'smaragd': 3, 'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 4},
     'robijnen_pikhouweel':  {'kosten': {'robijn': 3,  'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 5},
-    'rood':   {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
-    'oranje': {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
-    'geel':   {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
-    'groen':  {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
-    'blauw':  {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
-    'wit':    {'kosten': {'steen': 2}, 'maakt': 4, 'plaatsbaar': True, 'is_blok': True},
 }
 
 # 'maaktafel' mag je met je HANDEN maken (zonder tafel). De rest niet.
 RECEPTEN['maaktafel']['hand'] = True
-
-
-# ============================================================================
-#  DE BLOKKEN-FABRIEK: honderden blokken automatisch maken! 🎨
-# ----------------------------------------------------------------------------
-#  - 100 NATUUR-blokken: die vind je in de wereld (graven om te verzamelen).
-#  - 300 HAND-blokken:   die maak je met je handen (zonder maak-tafel).
-#  - 400 TAFEL-blokken:  die maak je alleen bij een maak-tafel.
-#  Elk blok krijgt een eigen kleur en een eigen naam, zodat je ze kunt
-#  herkennen en in de zoekbalk kunt opzoeken.
-# ============================================================================
-
-# Een paar kleur-woorden om de blokken een herkenbare naam te geven.
-KLEUR_WOORDEN = ['rood', 'oranje', 'geel', 'limoen', 'groen', 'zeegroen',
-                 'cyaan', 'azuur', 'blauw', 'paars', 'magenta', 'roze']
-
-
-def _kleur_van_hoek(hoek, verzadiging, helderheid):
-    """Maakt een kleur van een 'kleur-hoek' (0..1) op het kleurenwiel."""
-    r, g, b = colorsys.hsv_to_rgb(hoek, verzadiging, helderheid)
-    return color.rgb(r, g, b)   # color.rgb wil waarden van 0 tot 1!
-
-
-def _kleur_woord(hoek):
-    """Geeft het kleur-woord dat bij deze kleur-hoek hoort (rood, groen, ...)."""
-    i = int(hoek * len(KLEUR_WOORDEN)) % len(KLEUR_WOORDEN)
-    return KLEUR_WOORDEN[i]
-
-
-def maak_veel_blokken(voorvoegsel, aantal, verzadiging, helderheid,
-                      in_natuur=False, recept=None):
-    """Maakt 'aantal' gekleurde blokken. Geeft de lijst met hun namen terug.
-    - voorvoegsel: korte code voor de naam (bv 'n', 'h', 't')
-    - in_natuur:   True = je vindt het blok in de wereld
-    - recept:      None = geen recept; anders een dict met kosten + of het
-                   met de hand mag (zonder maak-tafel)."""
-    namen = []
-    for i in range(aantal):
-        # De 'gulden hoek' verdeelt de kleuren mooi over het hele kleurenwiel,
-        # zodat blokken die na elkaar komen toch heel verschillend van kleur zijn.
-        hoek = (i * 0.61803398875) % 1.0
-        key = f"{voorvoegsel}{i + 1}"
-        KLEUREN[key]    = _kleur_van_hoek(hoek, verzadiging, helderheid)
-        ITEM_NAMEN[key] = f"{_kleur_woord(hoek).capitalize()} {i + 1}"
-        if in_natuur:
-            BLOK_KEUZES.append(key)            # je kunt het vinden en plaatsen
-        if recept is not None:
-            mat = recept['mats'][i % len(recept['mats'])]
-            RECEPTEN[key] = {'kosten': {mat: recept['kosten']}, 'maakt': 4,
-                             'plaatsbaar': True, 'is_blok': True,
-                             'hand': recept['hand']}
-        namen.append(key)
-    return namen
-
-
-# 100 natuur-blokken: aardige, wat zachtere kleuren (zoals echte natuur).
-NATUUR_BLOKKEN = maak_veel_blokken('n', 100, verzadiging=0.45, helderheid=0.60,
-                                   in_natuur=True)
-
-# 300 hand-blokken: felle kleuren. Maak je met je HANDEN van 1 simpel blok.
-HAND_BLOKKEN = maak_veel_blokken(
-    'h', 300, verzadiging=0.75, helderheid=0.95,
-    recept={'mats': ['steen', 'aarde', 'zand', 'hout', 'kool'],
-            'kosten': 1, 'hand': True})
-
-# 400 tafel-blokken: stevige kleuren. Maak je alleen BIJ een maak-tafel.
-TAFEL_BLOKKEN = maak_veel_blokken(
-    't', 400, verzadiging=0.85, helderheid=0.78,
-    recept={'mats': ['steen', 'aarde', 'zand', 'hout', 'kool', 'klei', 'zandsteen'],
-            'kosten': 2, 'hand': False})
-
-print(f"Blokken gemaakt: {len(NATUUR_BLOKKEN)} natuur, "
-      f"{len(HAND_BLOKKEN)} hand, {len(TAFEL_BLOKKEN)} tafel.")
 
 
 # ============================================================================
