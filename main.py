@@ -1,6 +1,7 @@
 from ursina import *
 from ursina.prefabs.first_person_controller import FirstPersonController
 from ursina.prefabs.input_field import InputField   # het typ-vakje (zoekbalk)
+import mc_blokken                                    # gegevens van de Minecraft-blokken
 from perlin_noise import PerlinNoise
 import random
 import math
@@ -316,8 +317,15 @@ def bouw_chunk_model(cx, cz):
         # ...en plak ze daarna samen tot één model. De losse kubussen
         # worden dan automatisch opgeruimd (auto_destroy).
         ouder.combine(auto_destroy=True)
-        ouder.texture = 'white_cube'
-        ouder.color   = KLEUREN.get(t, color.white)
+        # Heeft dit blok een echt plaatje (texture)? Dan dat gebruiken (kleur wit,
+        # zodat het plaatje z'n eigen kleuren houdt). Anders het oude gekleurde blok.
+        tex = BLOK_TEXTUUR.get(t)
+        if tex:
+            ouder.texture = blok_texture(tex)
+            ouder.color   = color.white
+        else:
+            ouder.texture = 'white_cube'
+            ouder.color   = KLEUREN.get(t, color.white)
         if t != 'water':
             ouder.collider = 'mesh'   # zodat je het kunt aanklikken en erop staan
         modellen.append(ouder)
@@ -460,6 +468,47 @@ TAFEL_BLOKKEN = maak_veel_blokken(
 
 print(f"Blokken gemaakt: {len(NATUUR_BLOKKEN)} natuur, "
       f"{len(HAND_BLOKKEN)} hand, {len(TAFEL_BLOKKEN)} tafel.")
+
+
+# ============================================================================
+#  MINECRAFT-BLOKKEN met echte plaatjes (textures) 🧱
+#  De plaatjes staan in assets/textures/ (gemaakt met maak_textures.py).
+# ============================================================================
+
+# BLOK_TEXTUUR onthoudt per bloktype welk plaatje het gebruikt.
+BLOK_TEXTUUR = {}
+BLOK_TEXTUUR.update(mc_blokken.BESTAANDE_TEXTUREN)   # bestaande blokken krijgen een plaatje
+
+# De reservekleur per plaatje (voor als een plaatje niet geladen kan worden)
+_basiskleur = {d['naam']: d['c1'] for d in mc_blokken.TEXTUUR_DEFS}
+
+# De nieuwe Minecraft-blokken toevoegen aan het spel
+for _b in mc_blokken.NIEUWE_BLOKKEN:
+    _key = _b['key']
+    BLOK_TEXTUUR[_key] = _key                        # plaatje heet net zo als het blok
+    ITEM_NAMEN[_key]   = _b['naam']
+    _rgb = _basiskleur.get(_key, (150, 150, 150))
+    KLEUREN[_key]      = color.rgb(_rgb[0] / 255, _rgb[1] / 255, _rgb[2] / 255)
+    BLOK_KEUZES.append(_key)                          # je kunt het vasthouden en plaatsen
+    RECEPTEN[_key] = {'kosten': _b['kosten'], 'maakt': 4,
+                      'plaatsbaar': True, 'is_blok': True, 'hand': False}
+
+
+# We onthouden geladen plaatjes, zodat we ze maar één keer hoeven te laden.
+_textuur_geheugen = {}
+
+
+def blok_texture(naam):
+    """Laadt een plaatje en zorgt voor SCHERPE pixels (geen wazige rand)."""
+    if naam not in _textuur_geheugen:
+        t = load_texture(naam)
+        if t is not None:
+            try:
+                t.filtering = None      # 'nearest': mooie blokkerige pixels
+            except Exception:
+                pass
+        _textuur_geheugen[naam] = t
+    return _textuur_geheugen[naam]
 
 
 def maak_speciaal_model(naam, pos, richting=0):
