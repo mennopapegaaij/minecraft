@@ -1,0 +1,3 @@
+# Tijdelijke Python-bestanden (hoeven niet bewaard te worden)
+__pycache__/
+*.pyc
