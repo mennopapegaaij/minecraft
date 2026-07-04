@@ -1,7 +1,7 @@
 from ursina import *
 from ursina.prefabs.first_person_controller import FirstPersonController
 from ursina.prefabs.input_field import InputField   # het typ-vakje (zoekbalk)
-from ursina.shaders import basic_lighting_shader     # licht-shader: bovenkant helder, zijkant donker
+from ursina.shader import Shader                     # om onze eigen licht-shader te maken
 import mc_blokken                                    # gegevens van de Minecraft-blokken
 from perlin_noise import PerlinNoise
 import random
@@ -26,6 +26,71 @@ spel_klok.setFrameRate(DOEL_FPS)
 # hapering valt de speler anders in één keer zo ver dat hij DWARS DOOR de grond
 # schiet. Met deze grens blijven de stapjes klein en blijf je netjes staan.
 spel_klok.setMaxDt(1 / 30)
+
+
+# ======================================================================
+#  VERLICHTING (zoals in het echte Minecraft: licht in de blokken bakken)
+# ======================================================================
+# We gebruiken GEEN echte lampen. Onze eigen shader doet twee dingen:
+#  1) VLAK-SHADING: uit de richting (normaal) van een vlak berekent hij hoe
+#     fel dat vlak is -- bovenkant helder, zijkanten donkerder, onderkant het
+#     donkerst. Precies zoals Minecraft.
+#  2) BLOKLICHT: elk blok krijgt een kleur (ingebakken als vertex-kleur) die
+#     vertelt hoeveel licht het krijgt (grotten worden donker).
+# Met de 'daglicht'-knop dimmen we 's nachts alles in één keer.
+
+blok_shader = Shader(name='blok_shader', language=Shader.GLSL,
+vertex='''#version 130
+uniform mat4 p3d_ModelViewProjectionMatrix;
+uniform mat4 p3d_ModelMatrix;
+in vec4 p3d_Vertex;
+in vec2 p3d_MultiTexCoord0;
+in vec3 p3d_Normal;
+in vec4 p3d_Color;
+out vec2 uvs;
+out vec3 world_normal;
+out vec4 vertex_color;
+void main() {
+    gl_Position = p3d_ModelViewProjectionMatrix * p3d_Vertex;
+    uvs = p3d_MultiTexCoord0;
+    world_normal = normalize(mat3(p3d_ModelMatrix) * p3d_Normal);  // welke kant wijst dit vlak op?
+    vertex_color = p3d_Color;      // de ingebakken licht-kleur van dit blok
+}
+''',
+fragment='''#version 140
+uniform sampler2D p3d_Texture0;
+uniform vec4 p3d_ColorScale;
+uniform float daglicht;            // 1 = dag, klein = nacht
+in vec2 uvs;
+in vec3 world_normal;
+in vec4 vertex_color;
+out vec4 fragColor;
+void main() {
+    // Vlak-shading: hoe fel is dit vlak op basis van zijn richting?
+    vec3 n = normalize(world_normal);
+    float fb;
+    if (abs(n.y) >= abs(n.x) && abs(n.y) >= abs(n.z))
+        fb = n.y > 0.0 ? 1.0 : 0.45;   // boven fel, onder donkerst
+    else if (abs(n.z) >= abs(n.x))
+        fb = 0.80;                     // voor/achter
+    else
+        fb = 0.60;                     // links/rechts
+    vec4 c = texture(p3d_Texture0, uvs) * p3d_ColorScale * vertex_color;
+    c.rgb *= fb * daglicht;            // vlak-shading en nacht-dimming
+    fragColor = c;
+}
+''',
+default_input={'daglicht': 1.0},
+)
+
+MIN_LICHT = 0.10    # hoe donker de allerdonkerste plekken worden (niet pikzwart)
+MAX_LICHT = 15      # hoogste lichtniveau (net als Minecraft: 0 t/m 15)
+
+
+def licht_factor(niveau):
+    """Zet een lichtniveau (0..15) om in een helderheid (MIN_LICHT..1.0)."""
+    return MIN_LICHT + (1 - MIN_LICHT) * (niveau / MAX_LICHT)
+
 
 # Willekeurig zaad: elke keer een andere wereld!
 WERELD_ZAAD = random.randint(1, 9999)
@@ -178,11 +243,10 @@ def is_grot(x, y, z, grond_hoogte):
 # De 6 buren van een blok: rechts, links, boven, onder, voor, achter
 BUREN = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
 
-# Deze blokken houden het (hemel)licht NIET tegen. Alle andere blokken wel.
-# Zo wordt het donker onder de grond, maar niet onder een raampje van glas.
+# Deze blokken houden het licht NIET tegen (licht schijnt er dwars doorheen).
+# Alle andere blokken wel. Zo wordt het donker onder de grond, maar niet onder
+# een raampje van glas.
 LICHT_DOORLATEND = {'glas', 'water'}
-
-DONKER_FACTOR = 0.4       # hoe donker een blok wordt als er iets bovenop ligt
 
 
 def blok_zichtbaar(x, y, z):
@@ -277,6 +341,88 @@ def genereer_chunk_data(cx, cz):
         wereld[pos] = t
 
 
+LICHT_MARGE = 6      # hoeveel blokken buiten de chunk we meenemen (licht van buren)
+LICHT_HOOGTE = 48    # niet dieper dan dit rekenen (anders te traag bij diepe schachten)
+
+
+def bereken_chunk_licht(cx, cz):
+    """Reken uit hoeveel licht elk zichtbaar blok van deze chunk krijgt.
+    Werkt zoals in het echte Minecraft: licht begint bij niveau 15 in de open
+    lucht en stroomt de holtes in, elke stap 1 minder. Zo wordt een grot of
+    tunnel steeds donkerder naarmate je dieper gaat -- in alle richtingen.
+    Geeft terug: {(x, y, z): niveau 0..15} voor de zichtbare blokken."""
+    x0, z0 = cx * CHUNK_GROOTTE, cz * CHUNK_GROOTTE
+    xmin, xmax = x0 - LICHT_MARGE, x0 + CHUNK_GROOTTE - 1 + LICHT_MARGE
+    zmin, zmax = z0 - LICHT_MARGE, z0 + CHUNK_GROOTTE - 1 + LICHT_MARGE
+
+    # 1. Verzamel alle blokken in dit gebied (deze chunk + de buurchunks).
+    vaste = {}
+    for gcx in range(cx - 1, cx + 2):
+        for gcz in range(cz - 1, cz + 2):
+            genereer_chunk_data(gcx, gcz)
+            for pos, t in chunk_blokken.get((gcx, gcz), {}).items():
+                if xmin <= pos[0] <= xmax and zmin <= pos[2] <= zmax:
+                    vaste[pos] = t
+
+    if not vaste:
+        return {}
+
+    def laat_licht_door(pos):
+        """Kan licht door deze plek? (lege lucht, of glas/water)"""
+        t = vaste.get(pos)
+        return t is None or t in LICHT_DOORLATEND
+
+    # 2. Bepaal het hoogste 'dichte' blok per kolom (daarboven schijnt de zon).
+    ys = [pos[1] for pos in vaste]
+    ytop = max(ys) + 2
+    ybot = max(min(ys) - 2, ytop - LICHT_HOOGTE)
+    kolom_top = {}
+    for (x, y, z), t in vaste.items():
+        if t not in LICHT_DOORLATEND and y > kolom_top.get((x, z), -10 ** 9):
+            kolom_top[(x, z)] = y
+
+    # 3. Seed: alle lucht-cellen bóven het kolom-dak krijgen vol zonlicht (15).
+    licht = {}
+    rij = collections.deque()
+    for x in range(xmin, xmax + 1):
+        for z in range(zmin, zmax + 1):
+            dak = kolom_top.get((x, z), ybot - 1)
+            for y in range(dak + 1, ytop + 1):
+                pos = (x, y, z)
+                if laat_licht_door(pos):
+                    licht[pos] = MAX_LICHT
+                    rij.append(pos)
+
+    # 4. Flood-fill: het licht stroomt naar de buren, elke stap 1 minder.
+    while rij:
+        x, y, z = rij.popleft()
+        niveau = licht[(x, y, z)]
+        if niveau <= 1:
+            continue
+        for dx, dy, dz in BUREN:
+            buur = (x + dx, y + dy, z + dz)
+            if not (xmin <= buur[0] <= xmax and ybot <= buur[1] <= ytop
+                    and zmin <= buur[2] <= zmax):
+                continue
+            if laat_licht_door(buur) and licht.get(buur, 0) < niveau - 1:
+                licht[buur] = niveau - 1
+                rij.append(buur)
+
+    # 5. Elk zichtbaar blok krijgt het felste licht van zijn 6 buur-lucht-cellen.
+    resultaat = {}
+    for pos, t in chunk_blokken.get((cx, cz), {}).items():
+        if not blok_zichtbaar(*pos):
+            continue
+        best = 0
+        for dx, dy, dz in BUREN:
+            buur = (pos[0] + dx, pos[1] + dy, pos[2] + dz)
+            n = licht.get(buur, 0)
+            if n > best:
+                best = n
+        resultaat[pos] = best
+    return resultaat
+
+
 def bouw_chunk_model(cx, cz):
     """HET MINECRAFT-TRUCJE: plak alle zichtbare blokken van dit stukje wereld
     samen tot één groot model per kleur. Daardoor hoeft de computer nog maar
@@ -289,55 +435,39 @@ def bouw_chunk_model(cx, cz):
 
     blokken_hier = chunk_blokken.get((cx, cz), {})
 
-    # HEMELLICHT-TRUC: reken eerst per kolom (x, z) uit hoe hoog het hoogste
-    # blok ligt dat het licht tegenhoudt. Alles wat daaronder zit, krijgt geen
-    # zonlicht meer en wordt donker (net als grotten en kelders in Minecraft).
-    hoogste_dak = {}
-    for (x, y, z), t in blokken_hier.items():
-        if t not in LICHT_DOORLATEND:
-            if y > hoogste_dak.get((x, z), -9999):
-                hoogste_dak[(x, z)] = y
+    # Reken uit hoeveel licht elk zichtbaar blok krijgt (grotten worden donker).
+    licht = bereken_chunk_licht(cx, cz)
 
-    def zit_in_donker(x, y, z):
-        """Ligt er iets bovenop dit blok? Dan schijnt de zon er niet op."""
-        return y < hoogste_dak.get((x, z), -9999)
-
-    # Verzamel de zichtbare blokken, gesorteerd per bloktype én per licht.
-    # De sleutel is (bloktype, donker?) zodat lichte en donkere blokken van
-    # hetzelfde type apart worden samengevoegd (die krijgen een andere kleur).
+    # Verzamel de zichtbare blokken, gesorteerd per bloktype (per texture).
     per_type = collections.defaultdict(list)
     for pos, t in blokken_hier.items():
         if blok_zichtbaar(*pos):
-            per_type[(t, zit_in_donker(*pos))].append(pos)
+            per_type[t].append(pos)
 
     modellen = []
-    for (t, donker), posities in per_type.items():
-        ouder = Entity()
-        # Maak tijdelijk voor elk blok een kubus...
-        for (x, y, z) in posities:
-            Entity(parent=ouder, model='cube', position=(x, y, z))
-        # ...en plak ze daarna samen tot één model. De losse kubussen
-        # worden dan automatisch opgeruimd (auto_destroy).
-        ouder.combine(auto_destroy=True)
-        # De licht-shader zorgt dat de bovenkant helderder is dan de zijkanten.
-        ouder.shader = basic_lighting_shader
-        # Heeft dit blok een echt plaatje (texture)? Dan dat gebruiken (kleur wit,
-        # zodat het plaatje z'n eigen kleuren houdt). Anders het oude gekleurde blok.
+    for t, posities in per_type.items():
+        # Heeft dit blok een echt plaatje (texture)? Dan is de basiskleur wit,
+        # zodat het plaatje z'n eigen kleuren houdt. Anders het gekleurde blok.
         tex = BLOK_TEXTUUR.get(t)
-        if tex:
-            ouder.texture = blok_texture(tex)
-            basiskleur    = color.white
-        else:
-            ouder.texture = 'white_cube'
-            basiskleur    = KLEUREN.get(t, color.white)
-        # Zit er iets bovenop? Dan de kleur donkerder maken (geen zonlicht).
-        if donker:
-            ouder.color = color.rgba(basiskleur.r * DONKER_FACTOR,
-                                     basiskleur.g * DONKER_FACTOR,
-                                     basiskleur.b * DONKER_FACTOR,
-                                     basiskleur.a)
-        else:
-            ouder.color = basiskleur
+        basiskleur = color.white if tex else KLEUREN.get(t, color.white)
+
+        ouder = Entity()
+        # Maak tijdelijk voor elk blok een kubus. De KLEUR van het blokje =
+        # basiskleur x bloklicht. Bij het samenplakken wordt die kleur ingebakken
+        # als vertex-kleur; de vlak-shading doet de shader zelf via de normaal.
+        for pos in posities:
+            factor = licht_factor(licht.get(pos, 0))
+            Entity(parent=ouder, model='cube', position=pos,
+                   color=color.rgba(basiskleur.r * factor,
+                                    basiskleur.g * factor,
+                                    basiskleur.b * factor,
+                                    basiskleur.a))
+        # ...en plak ze daarna samen tot één model (losse kubussen ruimt hij op).
+        # include_normals=True is nodig zodat de shader de vlak-richting kent!
+        ouder.combine(auto_destroy=True, include_normals=True)
+        ouder.shader  = blok_shader        # doet vlak-shading + leest bloklicht uit
+        ouder.texture = blok_texture(tex) if tex else 'white_cube'
+        ouder.color   = color.white        # niet nog eens tinten (kleur zit al in mesh)
         if t != 'water':
             ouder.collider = 'mesh'   # zodat je het kunt aanklikken en erop staan
         modellen.append(ouder)
@@ -812,19 +942,9 @@ MAX_MONSTERS = 6          # zoveel monsters mogen er 's nachts tegelijk zijn
 # --- Dag en nacht + verlichting ---
 lucht = Sky(color=color.rgb(0.5, 0.7, 1.0))
 
-# De ZON: een licht dat uit één richting schijnt (zoals de echte zon).
-# Dankzij de licht-shader op de blokken maakt dit de bovenkant helderder
-# dan de zijkanten, precies zoals in Minecraft.
-ZON_BASIS = color.rgb(1.0, 0.97, 0.9)   # de kleur/sterkte van de zon overdag
-zon   = DirectionalLight(color=ZON_BASIS)
-zon.rotation = (45, -45, 0)
-
-# OMGEVINGSLICHT: een beetje licht dat overal een klein beetje schijnt,
-# zodat de schaduw-kanten niet helemaal pikzwart worden.
-OMGEVING_BASIS = color.rgb(0.45, 0.45, 0.5)
-omgevingslicht = AmbientLight(color=OMGEVING_BASIS)
-
-MAANLICHT = 0.12          # hoeveel licht er 's nachts nog is (maanlicht, niet pikzwart)
+# De verlichting van de blokken zit al ingebakken (zie blok_shader / LICHT_KUBUS).
+# Overdag staat de 'daglicht'-knop op 1, 's nachts dimmen we die naar MAANLICHT.
+MAANLICHT = 0.14          # hoeveel licht er 's nachts nog is (maanlicht, niet pikzwart)
 
 dag_tijd   = 0.0
 DAG_LENGTE = 60.0
@@ -1204,20 +1324,17 @@ def update():
     # --- Dag en nacht laten verlopen ---
     dag_tijd += time.dt
     fractie = (dag_tijd % DAG_LENGTE) / DAG_LENGTE
-    zon.rotation = (fractie * 360, -45, 0)
     hoogte = math.sin(fractie * 2 * math.pi)
     helder = max(0.1, (hoogte + 1) / 2)
     lucht.color = color.rgb(0.5 * helder, 0.7 * helder, 1.0 * helder)
 
-    # Ook de blokken mee laten dimmen: overdag vol zonlicht, 's nachts alleen
+    # Ook de blokken mee laten dimmen: overdag vol daglicht, 's nachts alleen
     # een beetje maanlicht (MAANLICHT) zodat het donker is maar niet pikzwart.
+    # We draaien aan de 'daglicht'-knop van elk chunk-model (onze eigen shader).
     daglicht = max(MAANLICHT, helder)
-    zon.color = color.rgb(ZON_BASIS.r * daglicht,
-                          ZON_BASIS.g * daglicht,
-                          ZON_BASIS.b * daglicht)
-    omgevingslicht.color = color.rgb(OMGEVING_BASIS.r * daglicht,
-                                     OMGEVING_BASIS.g * daglicht,
-                                     OMGEVING_BASIS.b * daglicht)
+    for modellen in chunk_modellen.values():
+        for model in modellen:
+            model.set_shader_input('daglicht', daglicht)
 
     # Is het nacht? (de zon staat onder de horizon). Wordt het net dag?
     # Dan verbranden alle monsters in de zon en is het weer veilig!
