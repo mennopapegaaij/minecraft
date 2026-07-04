@@ -331,22 +331,31 @@ STIJLEN = {
 
 def maak_barst_textures(map_pad, stages=5):
     """Maakt DOORZICHTIGE barst-plaatjes (barst_0 t/m barst_4). Die leggen we
-    over een blok terwijl je erop hakt: hoe verder je bent, hoe meer barsten."""
+    over een blok terwijl je erop hakt.
+
+    BELANGRIJK: we tekenen ze OP ELKAAR. We beginnen met één doorzichtig plaatje
+    en tekenen bij elke fase een paar scheuren ERBIJ (de oude blijven staan).
+    Zo blijven de barsten op dezelfde plek en komen er alleen scheuren bij."""
+    rng = random.Random(1000)                     # één toevalreeks voor alle fases
+    img = Image.new('RGBA', (S, S), (0, 0, 0, 0)) # helemaal doorzichtig
+    px = img.load()
+
+    def teken_een_scheur():
+        """Tekent één kronkelige donkere scheur op het plaatje."""
+        x = rng.randint(4, S - 5)
+        y = rng.randint(4, S - 5)
+        for _ in range(rng.randint(6, 14)):
+            for dx, dy in ((0, 0), (1, 0), (0, 1)):   # ietsje dik maken
+                xx, yy = x + dx, y + dy
+                if 0 <= xx < S and 0 <= yy < S:
+                    px[xx, yy] = (25, 25, 25, 210)    # donkere, halfdoorzichtige scheur
+            x = max(0, min(S - 1, x + rng.choice((-1, 0, 1))))
+            y = max(0, min(S - 1, y + rng.choice((-1, 0, 1))))
+
     for s in range(stages):
-        rng = random.Random(1000 + s)          # elke fase altijd dezelfde barsten
-        img = Image.new('RGBA', (S, S), (0, 0, 0, 0))   # helemaal doorzichtig
-        px = img.load()
-        aantal = 2 + s * 2                     # in latere fases meer scheuren
-        for _ in range(aantal):
-            x = rng.randint(4, S - 5)
-            y = rng.randint(4, S - 5)
-            for _ in range(rng.randint(6, 14)):        # een kronkelige scheur
-                for dx, dy in ((0, 0), (1, 0), (0, 1)):   # ietsje dik maken
-                    xx, yy = x + dx, y + dy
-                    if 0 <= xx < S and 0 <= yy < S:
-                        px[xx, yy] = (25, 25, 25, 210)     # donkere, halfdoorzichtige scheur
-                x = max(0, min(S - 1, x + rng.choice((-1, 0, 1))))
-                y = max(0, min(S - 1, y + rng.choice((-1, 0, 1))))
+        # In elke fase een paar scheuren ERBIJ (de scheuren van eerder blijven staan).
+        for _ in range(2):
+            teken_een_scheur()
         groot = img.resize((GROOT, GROOT), Image.NEAREST)
         groot.save(os.path.join(map_pad, f'barst_{s}.png'))
     print(f"Klaar! {stages} barst-plaatjes gemaakt in {map_pad}")
