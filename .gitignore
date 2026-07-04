@@ -2,5 +2,7 @@
 __pycache__/
 *.pyc
 
-# Het opgeslagen spel (van elke speler apart, hoort niet in git)
+# De opgeslagen werelden (van elke speler apart, horen niet in git)
 wereld_opslag.json
+werelden/
+huidige_wereld.txt

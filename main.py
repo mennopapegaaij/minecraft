@@ -9,6 +9,9 @@ import math
 import collections
 import json
 import os
+import sys
+import subprocess
+import shutil
 
 app = Ursina()
 
@@ -94,18 +97,57 @@ def licht_factor(niveau):
     return MIN_LICHT + (1 - MIN_LICHT) * (niveau / MAX_LICHT)
 
 
-# --- Opslaan / verder spelen ---
-# In dit bestandje bewaren we de wereld: het zaad + alles wat de speler heeft
-# veranderd (gesloopte en geplaatste blokken, rugzak, plek, tijd, enz.).
-OPSLAG_PAD = 'wereld_opslag.json'
+# --- Opslaan / verder spelen (meerdere werelden met een eigen naam) ---
+# Elke wereld is een eigen bestandje in de map 'werelden/'. In zo'n bestand
+# staat het zaad + alles wat de speler heeft veranderd (gesloopte en geplaatste
+# blokken, rugzak, plek, tijd, enz.). In 'huidige_wereld.txt' onthouden we welke
+# wereld je nu speelt.
+WERELDEN_MAP        = 'werelden'
+HUIDIGE_WERELD_PAD  = 'huidige_wereld.txt'
+
+
+def _wereld_bestand(naam):
+    """Het opslag-bestand dat bij een wereldnaam hoort."""
+    return os.path.join(WERELDEN_MAP, naam + '.json')
+
+
+def _bestaande_werelden():
+    """Alle wereldnamen die al zijn opgeslagen (op alfabet)."""
+    if not os.path.isdir(WERELDEN_MAP):
+        return []
+    return sorted(f[:-5] for f in os.listdir(WERELDEN_MAP) if f.endswith('.json'))
+
+
+def _huidige_wereld_naam():
+    """Welke wereld speel je nu? (staat in huidige_wereld.txt, anders 'wereld1')."""
+    if os.path.exists(HUIDIGE_WERELD_PAD):
+        try:
+            naam = open(HUIDIGE_WERELD_PAD, encoding='utf-8').read().strip()
+            if naam:
+                return naam
+        except Exception:
+            pass
+    return 'wereld1'
+
+
+# Zorg dat de werelden-map bestaat. Oude enkel-bestand-opslag netjes verhuizen.
+os.makedirs(WERELDEN_MAP, exist_ok=True)
+if os.path.exists('wereld_opslag.json') and not os.path.exists(_wereld_bestand('wereld1')):
+    try:
+        shutil.move('wereld_opslag.json', _wereld_bestand('wereld1'))
+    except Exception:
+        pass
+
+HUIDIGE_WERELD = _huidige_wereld_naam()
+OPSLAG_PAD     = _wereld_bestand(HUIDIGE_WERELD)
 
 
 def _lees_opslag():
-    """Leest het opgeslagen spel in (of None als er nog niks is / het stuk is)."""
+    """Leest de huidige wereld in (of None als hij nieuw is / het bestand stuk is)."""
     if not os.path.exists(OPSLAG_PAD):
         return None
     try:
-        with open(OPSLAG_PAD, 'r') as f:
+        with open(OPSLAG_PAD, encoding='utf-8') as f:
             return json.load(f)
     except Exception:
         return None
@@ -117,10 +159,10 @@ OPGESLAGEN = _lees_opslag()
 # zaad gebruiken. Anders een nieuw willekeurig zaad (elke keer een andere wereld).
 if OPGESLAGEN:
     WERELD_ZAAD = OPGESLAGEN['zaad']
-    print(f"Wereld geladen van opslag (zaad {WERELD_ZAAD})")
+    print(f"Wereld '{HUIDIGE_WERELD}' geladen (zaad {WERELD_ZAAD})")
 else:
     WERELD_ZAAD = random.randint(1, 9999)
-    print(f"Nieuwe wereld (zaad {WERELD_ZAAD})")
+    print(f"Nieuwe wereld '{HUIDIGE_WERELD}' (zaad {WERELD_ZAAD})")
 
 # Drie lagen ruis voor een natuurlijk landschap
 ruis_groot  = PerlinNoise(octaves=3,  seed=WERELD_ZAAD)
@@ -1221,7 +1263,7 @@ Text(
     text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op: 's NACHTS komen er monsters! Sla ze met de linkermuis. Hartjes = je levens.\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur open/dicht\n"
-         "WASD = lopen   Spatie = springen   O = opslaan   Escape = opslaan & stoppen   F3 = meet-schermpje",
+         "WASD = lopen   O = opslaan   M = werelden (andere/nieuwe wereld)   Escape = opslaan & stoppen",
     position=(-0.85, 0.47),
     scale=1.1,
     background=True,
@@ -1547,6 +1589,109 @@ def verberg_maaktafel():
 sluit_knop.on_click = verberg_maaktafel
 
 
+# ======================================================================
+#  WERELDEN-MENU: meerdere werelden opslaan en een nieuwe wereld beginnen
+# ======================================================================
+werelden_menu = Entity(parent=camera.ui, enabled=False)
+Entity(parent=werelden_menu, model='quad', color=color.rgba(0, 0, 0, 0.92),
+       scale=(1.5, 1.0), z=1)
+Text(parent=werelden_menu, text="WERELDEN", position=(0, 0.43), origin=(0, 0), scale=1.6)
+werelden_huidig_tekst = Text(parent=werelden_menu, text="", position=(0, 0.35),
+                             origin=(0, 0), scale=0.9)
+Text(parent=werelden_menu, text="Klik op een wereld om daar verder te spelen:",
+     position=(0, 0.27), origin=(0, 0), scale=0.8)
+
+# Tien knop-vakjes voor de opgeslagen werelden (2 kolommen van 5).
+WERELD_KNOPPEN = 10
+wereld_slots = []
+for i in range(WERELD_KNOPPEN):
+    _kol = i // 5
+    _rij = i % 5
+    _knop = Button(parent=werelden_menu, text="-", scale=(0.32, 0.075),
+                   position=(-0.30 + _kol * 0.36, 0.16 - _rij * 0.088),
+                   color=color.azure)
+    _knop.text_entity.scale *= 0.7
+    wereld_slots.append(_knop)
+
+Text(parent=werelden_menu, text="Nieuwe wereld - typ een naam:",
+     position=(-0.46, -0.33), origin=(-0.5, 0), scale=0.8)
+wereld_naamveld = InputField(parent=werelden_menu, position=(0.06, -0.33),
+                             scale=(0.42, 0.05))
+nieuwe_wereld_knop = Button(parent=werelden_menu, text="Nieuwe wereld maken",
+                            scale=(0.42, 0.07), position=(0, -0.43), color=color.lime)
+nieuwe_wereld_knop.text_entity.scale *= 0.7
+werelden_sluit = Button(parent=werelden_menu, text="X", scale=(0.05, 0.05),
+                        position=(0.71, 0.45), color=color.red)
+
+
+def _herstart_naar(naam):
+    """Slaat de huidige wereld op, onthoudt de nieuwe wereld en start opnieuw op."""
+    sla_op(stil=True)
+    try:
+        with open(HUIDIGE_WERELD_PAD, 'w', encoding='utf-8') as f:
+            f.write(naam)
+    except Exception:
+        pass
+    # Start het spel opnieuw (die leest dan de gekozen wereld) en sluit dit venster.
+    subprocess.Popen([sys.executable] + sys.argv)
+    application.quit()
+
+
+def ga_naar_wereld(naam):
+    """Ga naar een bestaande wereld (of blijf, als je er al bent)."""
+    if naam == HUIDIGE_WERELD:
+        verberg_werelden_menu()
+        return
+    _herstart_naar(naam)
+
+
+def maak_nieuwe_wereld():
+    """Begin een gloednieuwe wereld met de getypte naam (altijd een vrije naam)."""
+    naam = ''.join(c for c in wereld_naamveld.text if c.isalnum() or c in ' _-').strip()
+    if not naam:
+        naam = 'wereld'
+    basis, n = naam, 1
+    while os.path.exists(_wereld_bestand(naam)):   # nooit een bestaande overschrijven
+        n += 1
+        naam = f"{basis}{n}"
+    _herstart_naar(naam)
+
+
+def vul_werelden_lijst():
+    """Zet de knoppen goed: één knop per opgeslagen wereld."""
+    werelden_huidig_tekst.text = f"Je speelt nu in: {HUIDIGE_WERELD}"
+    namen = _bestaande_werelden()
+    for i, knop in enumerate(wereld_slots):
+        if i < len(namen):
+            naam = namen[i]
+            knop.text     = ("> " if naam == HUIDIGE_WERELD else "") + naam
+            knop.color    = color.gold if naam == HUIDIGE_WERELD else color.azure
+            knop.on_click = Func(ga_naar_wereld, naam)
+            knop.enabled  = True
+        else:
+            knop.enabled = False
+
+
+def toon_werelden_menu():
+    """Opent het werelden-menu en maakt de muis vrij."""
+    werelden_menu.enabled = True
+    mouse.locked  = False
+    mouse.visible = True
+    wereld_naamveld.text = ""
+    vul_werelden_lijst()
+
+
+def verberg_werelden_menu():
+    """Sluit het werelden-menu en vergrendelt de muis weer."""
+    werelden_menu.enabled = False
+    mouse.locked  = True
+    mouse.visible = False
+
+
+werelden_sluit.on_click     = verberg_werelden_menu
+nieuwe_wereld_knop.on_click = maak_nieuwe_wereld
+
+
 def toggle_deur():
     """Doet de deur waar je naar kijkt open of dicht."""
     ent = mouse.hovered_entity
@@ -1710,24 +1855,30 @@ def update():
 
 
 def input(toets):
-    # Escape: het menu sluiten als het open is, anders opslaan en stoppen.
+    # Escape: een open menu sluiten, anders opslaan en stoppen.
     if toets == 'escape':
         if maaktafel.enabled:
             verberg_maaktafel()
+        elif werelden_menu.enabled:
+            verberg_werelden_menu()
         else:
             sla_op(stil=True)   # automatisch opslaan zodat je niks kwijtraakt
             quit()
         return
 
-    # Als de maak-tafel OPEN is, doen we verder niets met toetsen. Zo kun je
-    # rustig in de zoekbalk typen (ook letters als 'c' en cijfers) zonder dat
-    # er per ongeluk iets anders gebeurt.
-    if maaktafel.enabled:
+    # Is er een menu OPEN? Dan doen we verder niets met toetsen, zodat je rustig
+    # in een typvakje kunt typen zonder dat er per ongeluk iets anders gebeurt.
+    if maaktafel.enabled or werelden_menu.enabled:
         return
 
     # 'c' opent de maak-tafel
     if toets == 'c':
         toon_maaktafel()
+        return
+
+    # 'm' opent het werelden-menu (opslaan / andere of nieuwe wereld)
+    if toets == 'm':
+        toon_werelden_menu()
         return
 
     # 'o' slaat de wereld op (met een melding op het scherm)
