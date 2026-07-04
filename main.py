@@ -1446,9 +1446,44 @@ sluit_knop    = Button(parent=maaktafel, text="Sluiten (Esc)", scale=(0.22, 0.06
                        position=(0.70, -0.44), color=color.red)
 
 
+# ALLE houtsoorten (stammen én planken). Als een recept 'hout' vraagt, mag je
+# betalen met ELKE houtsoort. Zo kun je een maak-tafel, pikhouweel, deur enz.
+# van eik, berk, den, kers, jungle, acacia, donkere eik of mangrove maken.
+HOUT_SOORTEN = [
+    'hout', 'planken',
+    'mc_berk_stam',      'mc_berk_planken',
+    'mc_den_stam',       'mc_den_planken',
+    'mc_kers_stam',      'mc_kers_planken',
+    'mc_jungle_stam',    'mc_jungle_planken',
+    'mc_acacia_stam',    'mc_acacia_planken',
+    'mc_donkereik_stam', 'mc_donkereik_planken',
+    'mc_mangrove_stam',  'mc_mangrove_planken',
+]
+
+
+def totaal_hout():
+    """Hoeveel hout heb je in totaal (alle soorten bij elkaar opgeteld)?"""
+    return sum(rugzak.get(h, 0) for h in HOUT_SOORTEN)
+
+
+def betaal_hout(aantal):
+    """Haalt 'aantal' hout uit de rugzak, van welke houtsoort dan ook."""
+    for h in HOUT_SOORTEN:
+        if aantal <= 0:
+            break
+        pak = min(rugzak.get(h, 0), aantal)
+        if pak > 0:
+            rugzak[h] -= pak
+            aantal   -= pak
+
+
 def kan_betalen(naam):
-    """Heb je genoeg materiaal voor dit recept?"""
-    return all(rugzak.get(m, 0) >= n for m, n in RECEPTEN[naam]['kosten'].items())
+    """Heb je genoeg materiaal voor dit recept? ('hout' = elke houtsoort telt mee.)"""
+    for m, n in RECEPTEN[naam]['kosten'].items():
+        genoeg = totaal_hout() if m == 'hout' else rugzak.get(m, 0)
+        if genoeg < n:
+            return False
+    return True
 
 
 def filter_recepten():
@@ -1482,7 +1517,9 @@ def toon_pagina():
     for i, knop in enumerate(recept_slots):
         if i < len(deel):
             naam = deel[i]
-            kosten = "  ".join(f"{n}x {m}" for m, n in RECEPTEN[naam]['kosten'].items())
+            kosten = "  ".join(
+                f"{n}x {'hout (elke soort)' if m == 'hout' else m}"
+                for m, n in RECEPTEN[naam]['kosten'].items())
             knop.text     = f"{ITEM_NAMEN.get(naam, naam)}\n{kosten}"
             knop.color    = color.lime if kan_betalen(naam) else color.gray
             knop.on_click = Func(craft, naam)
@@ -1491,10 +1528,11 @@ def toon_pagina():
             knop.enabled = False        # leeg vakje: verbergen
     pagina_tekst.text = (f"Pagina {huidige_pagina + 1} / {aantal_paginas()}"
                          f"     ({len(gefilterd)} blokken gevonden)")
-    # En links je rugzak-materiaal laten zien
+    # En links je rugzak-materiaal laten zien (hout = alle houtsoorten samen)
     mats = ['hout', 'steen', 'kool', 'ijzer', 'goud', 'smaragd', 'diamant', 'klei']
     materiaal_tekst.text = "Je rugzak:\n" + "\n".join(
-        f"{m}: {rugzak.get(m, 0)}" for m in mats)
+        f"{'hout (alle)' if m == 'hout' else m}: "
+        f"{totaal_hout() if m == 'hout' else rugzak.get(m, 0)}" for m in mats)
 
 
 def werk_maaktafel_bij():
@@ -1534,9 +1572,12 @@ def craft(naam):
         else:
             toon_melding("Te weinig materiaal!")
         return
-    # Materiaal afrekenen
+    # Materiaal afrekenen ('hout' mag van elke houtsoort betaald worden)
     for m, n in r['kosten'].items():
-        rugzak[m] -= n
+        if m == 'hout':
+            betaal_hout(n)
+        else:
+            rugzak[m] -= n
     if 'niveau' in r:
         # Een pikhouweel: je pikhouweel-niveau gaat omhoog (sterkste telt).
         pikhouweel_niveau = max(pikhouweel_niveau, r['niveau'])
