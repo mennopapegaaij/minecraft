@@ -947,7 +947,7 @@ lucht = Sky(color=color.rgb(0.5, 0.7, 1.0))
 MAANLICHT = 0.14          # hoeveel licht er 's nachts nog is (maanlicht, niet pikzwart)
 
 dag_tijd   = 0.0
-DAG_LENGTE = 60.0
+DAG_LENGTE = 600.0        # een hele dag+nacht duurt 10 minuten: 5 min dag + 5 min nacht
 het_is_nacht = False      # is het nu nacht? (dan komen de monsters!)
 
 window.fps_counter.enabled = True
