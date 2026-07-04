@@ -164,6 +164,12 @@ else:
     WERELD_ZAAD = random.randint(1, 9999)
     print(f"Nieuwe wereld '{HUIDIGE_WERELD}' (zaad {WERELD_ZAAD})")
 
+# CREATIEF: in deze stand heb je oneindig blokken, kun je vliegen, komen er
+# geen monsters en breekt alles meteen. Deze stand hoort bij de wereld zelf.
+CREATIEF = bool(OPGESLAGEN and OPGESLAGEN.get('creatief'))
+if CREATIEF:
+    print("Creatieve modus AAN")
+
 # Drie lagen ruis voor een natuurlijk landschap
 ruis_groot  = PerlinNoise(octaves=3,  seed=WERELD_ZAAD)
 ruis_midden = PerlinNoise(octaves=6,  seed=WERELD_ZAAD + 1)
@@ -970,7 +976,9 @@ def plaats_blok():
     if mouse.world_point is None or mouse.world_normal is None:
         return
     naam = vastgehouden
-    if naam is None or rugzak.get(naam, 0) <= 0:
+    if naam is None:
+        return
+    if not CREATIEF and rugzak.get(naam, 0) <= 0:   # in creatief heb je oneindig
         toon_melding("Je hebt dit niet (meer)! Sloop eerst wat blokken.")
         return
 
@@ -982,7 +990,8 @@ def plaats_blok():
     if is_item(naam):
         richting = round(speler.rotation_y / 90) * 90   # naar de kant waar je kijkt
         if plaats_speciaal(naam, pos, richting):
-            rugzak[naam] -= 1
+            if not CREATIEF:
+                rugzak[naam] -= 1
             geluid_plaatsen.play()
             werk_hud_bij()
             if naam in ('hefboom', 'piston', 'kleverige_piston'):
@@ -999,7 +1008,8 @@ def plaats_blok():
     if naam in DRAAD_TYPES or naam in LAMP_TYPES or naam == 'redstone_blok':
         registreer_redstone_blok(pos, naam, True)
         werk_redstone_bij()
-    rugzak[naam] -= 1          # het blok gaat uit je rugzak
+    if not CREATIEF:
+        rugzak[naam] -= 1      # het blok gaat uit je rugzak (in creatief: oneindig)
     geluid_plaatsen.play()
     werk_hud_bij()
     herbouw_rond(pos)
@@ -1204,6 +1214,7 @@ def sla_op(stil=False):
 
     data = {
         'zaad': WERELD_ZAAD,
+        'creatief': CREATIEF,
         'weg':   [list(p) for p in weggehaald],
         'extra': [[p[0], p[1], p[2], t] for p, t in extra_blokken.items()],
         'speciaal': spec,
@@ -1422,6 +1433,8 @@ BARST_AANTAL = 5             # zoveel barst-plaatjes hebben we (barst_0 t/m bars
 
 def bereken_hak_duur(bloktype):
     """Hoe lang duurt het om dit bloktype te hakken? Met een pikhouweel sneller."""
+    if CREATIEF:
+        return 0.05          # in creatief breekt alles bijna meteen
     duur = HAK_TIJDEN.get(bloktype, STANDAARD_HAK_TIJD)
     if pikhouweel_niveau > 0:
         duur *= 0.6          # met pikhouweel gaat hakken lekker vlot
@@ -1472,7 +1485,7 @@ def werk_hakken_bij():
         hak_verstreken = 0.0
         hak_fase = -1
         nodig = ERTS_NIVEAU.get(wereld.get(doel), 0)
-        if nodig > pikhouweel_niveau:    # te hard voor je pikhouweel
+        if nodig > pikhouweel_niveau and not CREATIEF:   # te hard voor je pikhouweel
             toon_melding(f"Te hard! Hiervoor heb je een {PIKHOUWEEL_NAAM[nodig]} nodig.")
             hak_doel_duur = None
         else:
@@ -1519,6 +1532,19 @@ for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
 speler = FirstPersonController(height=2)
 speler.position = (SPAWN_X, spawn_grond + 2, SPAWN_Z)
 
+# Vliegen (alleen in creatief). We onthouden de gewone zwaartekracht.
+STANDAARD_GRAVITY = speler.gravity
+vliegt = False
+
+
+def zet_vliegen(aan):
+    """Zet vliegen aan of uit (alleen in de creatieve modus)."""
+    global vliegt
+    vliegt = aan
+    speler.gravity = 0 if aan else STANDAARD_GRAVITY
+    toon_melding("Vliegen AAN (spatie = omhoog, shift = omlaag)" if aan
+                 else "Vliegen uit")
+
 # --- Dieren (vreedzaam: varkens, koeien en schapen) ---
 dieren = []
 DIER_SOORTEN = [Varken, Koe, Schaap]
@@ -1556,6 +1582,12 @@ Text(
     scale=1.1,
     background=True,
 )
+
+# In de creatieve modus een duidelijke melding bovenaan.
+if CREATIEF:
+    Text(text="CREATIEF   (V = vliegen  •  C = blokken gratis pakken)",
+         position=(0, 0.38), origin=(0, 0), scale=1.1, color=color.cyan,
+         background=True)
 
 # --- Rugzak-overzicht LINKSONDER: wat heb je, en wat houd je vast? ---
 # Een pijltje '>' staat bij het blok/ding dat je nu vasthoudt om te plaatsen.
@@ -1669,6 +1701,8 @@ def werk_hartjes_bij():
 def doe_schade(n):
     """Haalt n hartjes van je af. Bij 0 hartjes begin je opnieuw."""
     global speler_hp
+    if CREATIEF:
+        return                # in creatief kun je geen schade krijgen
     speler_hp = max(0, speler_hp - n)
     werk_hartjes_bij()
     if speler_hp <= 0:
@@ -1774,16 +1808,28 @@ def kan_betalen(naam):
     return True
 
 
+def alle_plaatsbare():
+    """Alle dingen die je kunt plaatsen (blokken + deuren/hekken/...), elk 1x."""
+    volgorde = list(BLOK_KEUZES) + [n for n in RECEPTEN if RECEPTEN[n]['plaatsbaar']]
+    gezien, uniek = set(), []
+    for n in volgorde:
+        if n not in gezien:
+            gezien.add(n)
+            uniek.append(n)
+    return uniek
+
+
 def filter_recepten():
-    """Maakt de lijst met blokken die nu in het menu passen: ze moeten bij de
-    huidige stand horen (hand of tafel) én bij wat je in de zoekbalk typte."""
+    """Maakt de lijst met blokken die nu in het menu passen én bij de zoekbalk.
+    In creatief zie je ALLE blokken (om zomaar te pakken)."""
     global gefilterd
     zoek = zoekveld.text.lower().strip()
+    # In creatief: alle plaatsbare blokken. Anders: de recepten van de huidige stand.
+    bron = alle_plaatsbare() if CREATIEF else list(RECEPTEN)
     namen = []
-    for naam in RECEPTEN:
-        # Niet bij een tafel? Dan zie je alleen de dingen die je met de hand mag.
-        if not menu_bij_tafel and not RECEPTEN[naam].get('hand'):
-            continue
+    for naam in bron:
+        if not CREATIEF and not menu_bij_tafel and not RECEPTEN[naam].get('hand'):
+            continue          # zonder tafel zie je alleen hand-dingen
         toon = ITEM_NAMEN.get(naam, naam).lower()
         if zoek and zoek not in toon:
             continue
@@ -1805,11 +1851,15 @@ def toon_pagina():
     for i, knop in enumerate(recept_slots):
         if i < len(deel):
             naam = deel[i]
-            kosten = "  ".join(
-                f"{n}x {'hout (elke soort)' if m == 'hout' else m}"
-                for m, n in RECEPTEN[naam]['kosten'].items())
-            knop.text     = f"{ITEM_NAMEN.get(naam, naam)}\n{kosten}"
-            knop.color    = color.lime if kan_betalen(naam) else color.gray
+            if CREATIEF:                 # in creatief: gewoon de naam, gratis pakken
+                knop.text  = ITEM_NAMEN.get(naam, naam)
+                knop.color = color.lime
+            else:
+                kosten = "  ".join(
+                    f"{n}x {'hout (elke soort)' if m == 'hout' else m}"
+                    for m, n in RECEPTEN[naam]['kosten'].items())
+                knop.text  = f"{ITEM_NAMEN.get(naam, naam)}\n{kosten}"
+                knop.color = color.lime if kan_betalen(naam) else color.gray
             knop.on_click = Func(craft, naam)
             knop.enabled  = True
         else:
@@ -1846,8 +1896,14 @@ vorige_knop.on_click   = vorige_pagina
 
 
 def craft(naam):
-    """Maakt een ding als je genoeg materiaal hebt."""
+    """Maakt een ding als je genoeg materiaal hebt (in creatief: gewoon pakken)."""
     global pikhouweel_niveau
+    if CREATIEF:
+        # In creatief pak je het blok gratis en houd je het meteen vast.
+        rugzak[naam] = 999
+        kies_vast(naam)
+        werk_maaktafel_bij()
+        return
     # Niet bij een tafel? Dan kun je alleen 'hand'-dingen maken.
     if not menu_bij_tafel and not RECEPTEN[naam].get('hand'):
         toon_melding("Hiervoor moet je bij een maak-tafel staan!")
@@ -1900,7 +1956,9 @@ def toon_maaktafel():
     zoekveld.text = ""           # zoekbalk leegmaken
     vorige_zoek   = ""
     huidige_pagina = 0           # weer op de eerste pagina beginnen
-    if menu_bij_tafel:
+    if CREATIEF:
+        maaktafel_titel.text = "CREATIEF   -   klik op een blok om het te pakken (gratis!)   -   zoek in de balk"
+    elif menu_bij_tafel:
         maaktafel_titel.text = "MAAK-TAFEL   -   klik om te maken   -   typ in de zoekbalk om te zoeken"
     else:
         maaktafel_titel.text = ("MET JE HANDEN   -   nu kun je hand-blokken en een maak-tafel maken.\n"
@@ -1943,12 +2001,16 @@ for i in range(WERELD_KNOPPEN):
     wereld_slots.append(_knop)
 
 Text(parent=werelden_menu, text="Nieuwe wereld - typ een naam:",
-     position=(-0.46, -0.33), origin=(-0.5, 0), scale=0.8)
-wereld_naamveld = InputField(parent=werelden_menu, position=(0.06, -0.33),
+     position=(-0.46, -0.30), origin=(-0.5, 0), scale=0.8)
+wereld_naamveld = InputField(parent=werelden_menu, position=(0.06, -0.30),
                              scale=(0.42, 0.05))
-nieuwe_wereld_knop = Button(parent=werelden_menu, text="Nieuwe wereld maken",
-                            scale=(0.42, 0.07), position=(0, -0.43), color=color.lime)
-nieuwe_wereld_knop.text_entity.scale *= 0.7
+# Twee knoppen: een gewone (overleven) of een creatieve wereld.
+overleven_knop = Button(parent=werelden_menu, text="Nieuw: Overleven",
+                        scale=(0.36, 0.07), position=(-0.2, -0.41), color=color.lime)
+overleven_knop.text_entity.scale *= 0.7
+creatief_knop = Button(parent=werelden_menu, text="Nieuw: Creatief",
+                       scale=(0.36, 0.07), position=(0.2, -0.41), color=color.cyan)
+creatief_knop.text_entity.scale *= 0.7
 werelden_sluit = Button(parent=werelden_menu, text="X", scale=(0.05, 0.05),
                         position=(0.71, 0.45), color=color.red)
 
@@ -1974,8 +2036,9 @@ def ga_naar_wereld(naam):
     _herstart_naar(naam)
 
 
-def maak_nieuwe_wereld():
-    """Begin een gloednieuwe wereld met de getypte naam (altijd een vrije naam)."""
+def maak_nieuwe_wereld(creatief=False):
+    """Begin een gloednieuwe wereld met de getypte naam (altijd een vrije naam).
+    creatief=True maakt er een creatieve wereld van."""
     naam = ''.join(c for c in wereld_naamveld.text if c.isalnum() or c in ' _-').strip()
     if not naam:
         naam = 'wereld'
@@ -1983,7 +2046,23 @@ def maak_nieuwe_wereld():
     while os.path.exists(_wereld_bestand(naam)):   # nooit een bestaande overschrijven
         n += 1
         naam = f"{basis}{n}"
+    if creatief:
+        # Meteen een leeg wereld-bestand maken met de creatief-vlag erin.
+        try:
+            with open(_wereld_bestand(naam), 'w', encoding='utf-8') as f:
+                json.dump({'zaad': random.randint(1, 9999), 'creatief': True}, f)
+        except Exception:
+            pass
     _herstart_naar(naam)
+
+
+def _wereld_is_creatief(naam):
+    """Kijkt in het wereld-bestand of het een creatieve wereld is."""
+    try:
+        with open(_wereld_bestand(naam), encoding='utf-8') as f:
+            return bool(json.load(f).get('creatief'))
+    except Exception:
+        return False
 
 
 def vul_werelden_lijst():
@@ -1993,7 +2072,8 @@ def vul_werelden_lijst():
     for i, knop in enumerate(wereld_slots):
         if i < len(namen):
             naam = namen[i]
-            knop.text     = ("> " if naam == HUIDIGE_WERELD else "") + naam
+            merk = "* " if _wereld_is_creatief(naam) else ""   # * = creatief
+            knop.text     = ("> " if naam == HUIDIGE_WERELD else "") + merk + naam
             knop.color    = color.gold if naam == HUIDIGE_WERELD else color.azure
             knop.on_click = Func(ga_naar_wereld, naam)
             knop.enabled  = True
@@ -2017,8 +2097,9 @@ def verberg_werelden_menu():
     mouse.visible = False
 
 
-werelden_sluit.on_click     = verberg_werelden_menu
-nieuwe_wereld_knop.on_click = maak_nieuwe_wereld
+werelden_sluit.on_click = verberg_werelden_menu
+overleven_knop.on_click = Func(maak_nieuwe_wereld, False)
+creatief_knop.on_click  = Func(maak_nieuwe_wereld, True)
 
 
 def toggle_deur():
@@ -2102,9 +2183,17 @@ def update():
     if redstone_moet_update:
         werk_redstone_bij()
 
+    # --- Vliegen (creatief): met spatie omhoog en shift omlaag ---
+    if vliegt:
+        if held_keys['space']:
+            speler.y += 7 * time.dt
+        if held_keys['left shift'] or held_keys['control']:
+            speler.y -= 7 * time.dt
+
     # --- 's Nachts af en toe een nieuw monster laten verschijnen (niet te dichtbij) ---
+    # In creatief komen er GEEN monsters.
     monster_timer += time.dt
-    if het_is_nacht and monster_timer > 5 and len(monsters) < MAX_MONSTERS:
+    if not CREATIEF and het_is_nacht and monster_timer > 5 and len(monsters) < MAX_MONSTERS:
         monster_timer = 0.0
         hoek = random.uniform(0, 2 * math.pi)
         afst = random.uniform(18, 28)
@@ -2153,7 +2242,7 @@ def update():
     # doen we niks (zo kun je zo diep graven als je wilt). Is er niets onder je
     # (je valt de leegte in)? Dan zetten we je weer veilig bovenop de grond.
     grond_hier = hoogte_op(speler.x, speler.z)
-    if speler.y < grond_hier - 3:
+    if not vliegt and speler.y < grond_hier - 3:
         val_straal = raycast(speler.world_position, Vec3(0, -1, 0),
                              distance=80, ignore=[speler])
         if not val_straal.hit:
@@ -2233,6 +2322,11 @@ def input(toets):
     # 'o' slaat de wereld op (met een melding op het scherm)
     if toets == 'o':
         sla_op()
+        return
+
+    # 'v' zet vliegen aan/uit (alleen in de creatieve modus)
+    if toets == 'v' and CREATIEF:
+        zet_vliegen(not vliegt)
         return
 
     # Breken / plaatsen / deur
