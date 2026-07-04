@@ -1,3 +1,6 @@
 # Tijdelijke Python-bestanden (hoeven niet bewaard te worden)
 __pycache__/
 *.pyc
+
+# Het opgeslagen spel (van elke speler apart, hoort niet in git)
+wereld_opslag.json

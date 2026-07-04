@@ -7,6 +7,8 @@ from perlin_noise import PerlinNoise
 import random
 import math
 import collections
+import json
+import os
 
 app = Ursina()
 
@@ -92,9 +94,33 @@ def licht_factor(niveau):
     return MIN_LICHT + (1 - MIN_LICHT) * (niveau / MAX_LICHT)
 
 
-# Willekeurig zaad: elke keer een andere wereld!
-WERELD_ZAAD = random.randint(1, 9999)
-print(f"Wereld zaad: {WERELD_ZAAD}")
+# --- Opslaan / verder spelen ---
+# In dit bestandje bewaren we de wereld: het zaad + alles wat de speler heeft
+# veranderd (gesloopte en geplaatste blokken, rugzak, plek, tijd, enz.).
+OPSLAG_PAD = 'wereld_opslag.json'
+
+
+def _lees_opslag():
+    """Leest het opgeslagen spel in (of None als er nog niks is / het stuk is)."""
+    if not os.path.exists(OPSLAG_PAD):
+        return None
+    try:
+        with open(OPSLAG_PAD, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+OPGESLAGEN = _lees_opslag()
+
+# Het zaad bepaalt hoe de wereld eruitziet. Verder spelen? Dan het opgeslagen
+# zaad gebruiken. Anders een nieuw willekeurig zaad (elke keer een andere wereld).
+if OPGESLAGEN:
+    WERELD_ZAAD = OPGESLAGEN['zaad']
+    print(f"Wereld geladen van opslag (zaad {WERELD_ZAAD})")
+else:
+    WERELD_ZAAD = random.randint(1, 9999)
+    print(f"Nieuwe wereld (zaad {WERELD_ZAAD})")
 
 # Drie lagen ruis voor een natuurlijk landschap
 ruis_groot  = PerlinNoise(octaves=3,  seed=WERELD_ZAAD)
@@ -176,10 +202,44 @@ bouw_wachtrij   = collections.deque()   # stukjes die nog een 3D-model moeten kr
 weggehaald      = set()                 # plekken waar de speler een blok heeft weggesloopt
 vorige_chunk    = None
 
+# Om te kunnen OPSLAAN onthouden we per stukje wat de speler heeft veranderd:
+# welke blokken zijn weggehaald, en welke zijn erbij gekomen (geplaatst of
+# opgegraven). Zo kunnen we de wereld later precies zo terugbouwen.
+extra_blokken = {}                              # (x,y,z) -> bloktype (erbij gekomen)
+weg_index     = collections.defaultdict(set)    # (cx,cz) -> set met weggehaalde plekken
+extra_index   = collections.defaultdict(dict)   # (cx,cz) -> {plek: bloktype}
+
+
+def markeer_weg(pos):
+    """Onthoud dat hier een blok is weggehaald (voor opslaan + hergeneratie)."""
+    c = chunk_van_pos(pos[0], pos[2])
+    weggehaald.add(pos)
+    weg_index[c].add(pos)
+    extra_blokken.pop(pos, None)
+    extra_index[c].pop(pos, None)
+
+
+def markeer_extra(pos, bloktype):
+    """Onthoud dat hier een blok is bijgekomen (geplaatst of opgegraven)."""
+    c = chunk_van_pos(pos[0], pos[2])
+    extra_blokken[pos] = bloktype
+    extra_index[c][pos] = bloktype
+    weggehaald.discard(pos)
+    weg_index[c].discard(pos)
+
 
 def chunk_van_pos(x, z):
     """Berekent in welk stukje wereld een positie ligt."""
     return (math.floor(x / CHUNK_GROOTTE), math.floor(z / CHUNK_GROOTTE))
+
+
+# Is er een opgeslagen wereld? Zet de wijzigingen dan alvast klaar, zodat de
+# stukjes meteen goed (met jouw gebouwde/gesloopte dingen) gegenereerd worden.
+if OPGESLAGEN:
+    for _p in OPGESLAGEN.get('weg', []):
+        markeer_weg((_p[0], _p[1], _p[2]))
+    for _e in OPGESLAGEN.get('extra', []):
+        markeer_extra((_e[0], _e[1], _e[2]), _e[3])
 
 
 def hoogte_op(x, z):
@@ -282,6 +342,7 @@ def onthul_buren(pos):
             wereld[buur] = t
             cx, cz = chunk_van_pos(buur[0], buur[2])
             chunk_blokken.setdefault((cx, cz), {})[buur] = t
+            markeer_extra(buur, t)     # onthouden voor opslaan/hergeneratie
 
 
 def voeg_boom_toe(blokken, x, grond, z, rng, stam='hout', blad='blad', soort='rond'):
@@ -385,6 +446,14 @@ def genereer_chunk_data(cx, cz):
                     voeg_boom_toe(blokken, x, grond, z, rng, stam, blad, vorm)
                 elif rng.random() < 0.04:
                     blokken[(x, grond + 1, z)] = 'paddenstoel'  # klein paddenstoeltje
+
+    # De wijzigingen van de speler toepassen: eerst de erbij gekomen blokken
+    # (geplaatst of opgegraven), daarna de weggehaalde weer verwijderen.
+    c = (cx, cz)
+    for pos, t in extra_index.get(c, {}).items():
+        blokken[pos] = t
+    for pos in weg_index.get(c, ()):
+        blokken.pop(pos, None)
 
     chunk_blokken[(cx, cz)] = blokken
     # Zet alle blokken ook in het grote telefoonboek
@@ -748,7 +817,7 @@ def voltooi_breken(pos):
     t = wereld.pop(pos)
     cx, cz = chunk_van_pos(pos[0], pos[2])
     chunk_blokken.get((cx, cz), {}).pop(pos, None)
-    weggehaald.add(pos)        # onthoud dat dit blok weg is (komt niet terug)
+    markeer_weg(pos)           # onthoud dat dit blok weg is (ook voor opslaan)
     onthul_buren(pos)          # maak de blokken eronder/ernaast aan (geen void)
     # In je rugzak stoppen (water pak je niet op). Je krijgt altijd 1 blok.
     if t != 'water':
@@ -786,11 +855,41 @@ def plaats_blok():
     wereld[pos] = naam
     cx, cz = chunk_van_pos(pos[0], pos[2])
     chunk_blokken.setdefault((cx, cz), {})[pos] = naam
-    weggehaald.discard(pos)    # hier staat weer een blok, dus niet meer 'weg'
+    markeer_extra(pos, naam)   # onthoud dat je hier een blok plaatste (ook voor opslaan)
     rugzak[naam] -= 1          # het blok gaat uit je rugzak
     geluid_plaatsen.play()
     werk_hud_bij()
     herbouw_rond(pos)
+
+
+def sla_op(stil=False):
+    """Slaat de wereld op in een bestandje, zodat je later verder kunt spelen.
+    stil=True = geen melding op het scherm (voor automatisch opslaan)."""
+    # De zelfgemaakte dingen (deuren, hekken...) verzamelen, elk maar één keer.
+    unieke = {}
+    for rec in speciaal.values():
+        unieke[tuple(rec['cellen'][0])] = rec
+    spec = [{'naam': r['naam'], 'pos': list(p), 'richting': r['richting']}
+            for p, r in unieke.items()]
+
+    data = {
+        'zaad': WERELD_ZAAD,
+        'weg':   [list(p) for p in weggehaald],
+        'extra': [[p[0], p[1], p[2], t] for p, t in extra_blokken.items()],
+        'speciaal': spec,
+        'rugzak': rugzak,
+        'pikhouweel': pikhouweel_niveau,
+        'speler': [speler.x, speler.y, speler.z, speler.rotation_y, camera.rotation_x],
+        'dag_tijd': dag_tijd,
+    }
+    try:
+        with open(OPSLAG_PAD, 'w') as f:
+            json.dump(data, f)
+        if not stil:
+            toon_melding("Wereld opgeslagen! Je kunt gerust stoppen.")
+    except Exception:
+        if not stil:
+            toon_melding("Oeps, opslaan lukte niet.")
 
 
 # --- Geluiden ---
@@ -1122,7 +1221,7 @@ Text(
     text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op: 's NACHTS komen er monsters! Sla ze met de linkermuis. Hartjes = je levens.\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur open/dicht\n"
-         "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje",
+         "WASD = lopen   Spatie = springen   O = opslaan   Escape = opslaan & stoppen   F3 = meet-schermpje",
     position=(-0.85, 0.47),
     scale=1.1,
     background=True,
@@ -1463,18 +1562,48 @@ debug_tekst = Text(text="", position=(-0.85, -0.30), scale=1.1, background=True)
 gemiddelde_fps = 50.0
 debug_timer    = 0.0
 monster_timer  = 0.0      # om af en toe een nieuw monster te laten verschijnen
+autosave_timer = 0.0      # om af en toe automatisch op te slaan
+
+
+# --- Verder spelen: alle opgeslagen spullen, plek en tijd terugzetten ---
+if OPGESLAGEN:
+    rugzak.clear()
+    rugzak.update(OPGESLAGEN.get('rugzak', {}))
+    pikhouweel_niveau = OPGESLAGEN.get('pikhouweel', 0)
+    dag_tijd = OPGESLAGEN.get('dag_tijd', 0.0)
+    _sp = OPGESLAGEN.get('speler')
+    if _sp:
+        speler.position   = (_sp[0], _sp[1], _sp[2])
+        speler.rotation_y = _sp[3]
+        camera.rotation_x = _sp[4]
+    # De zelfgemaakte dingen (deuren, hekken, slabs...) terugzetten
+    for _s in OPGESLAGEN.get('speciaal', []):
+        plaats_speciaal(_s['naam'], tuple(_s['pos']), _s['richting'])
+    # De stukjes rondom de speler meteen bouwen zodat hij niet in de leegte valt
+    _pc = chunk_van_pos(speler.x, speler.z)
+    for _dcx in range(-1, 2):
+        for _dcz in range(-1, 2):
+            bouw_chunk_model(_pc[0] + _dcx, _pc[1] + _dcz)
+    werk_hud_bij()
+    werk_pikhouweel_hud()
 
 
 def update():
     """Wordt elke frame aangeroepen: dag/nacht, bouwen en stukjes beheren."""
     global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd, monster_timer
-    global het_is_nacht, vorige_zoek, huidige_pagina
+    global het_is_nacht, vorige_zoek, huidige_pagina, autosave_timer
 
     # --- Zoekbalk: typ je iets nieuws? Dan meteen opnieuw zoeken (pagina 1) ---
     if maaktafel.enabled and zoekveld.text != vorige_zoek:
         vorige_zoek = zoekveld.text
         huidige_pagina = 0
         werk_maaktafel_bij()
+
+    # --- Af en toe automatisch opslaan (zodat je niks kwijtraakt) ---
+    autosave_timer += time.dt
+    if autosave_timer > 90:
+        autosave_timer = 0.0
+        sla_op(stil=True)
 
     # --- Hakken: linkermuis ingedrukt houden op een blok laat barsten groeien ---
     werk_hakken_bij()
@@ -1581,11 +1710,12 @@ def update():
 
 
 def input(toets):
-    # Escape: het menu sluiten als het open is, anders het spel stoppen.
+    # Escape: het menu sluiten als het open is, anders opslaan en stoppen.
     if toets == 'escape':
         if maaktafel.enabled:
             verberg_maaktafel()
         else:
+            sla_op(stil=True)   # automatisch opslaan zodat je niks kwijtraakt
             quit()
         return
 
@@ -1598,6 +1728,11 @@ def input(toets):
     # 'c' opent de maak-tafel
     if toets == 'c':
         toon_maaktafel()
+        return
+
+    # 'o' slaat de wereld op (met een melding op het scherm)
+    if toets == 'o':
+        sla_op()
         return
 
     # Breken / plaatsen / deur
