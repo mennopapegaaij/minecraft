@@ -329,6 +329,29 @@ STIJLEN = {
 }
 
 
+def maak_barst_textures(map_pad, stages=5):
+    """Maakt DOORZICHTIGE barst-plaatjes (barst_0 t/m barst_4). Die leggen we
+    over een blok terwijl je erop hakt: hoe verder je bent, hoe meer barsten."""
+    for s in range(stages):
+        rng = random.Random(1000 + s)          # elke fase altijd dezelfde barsten
+        img = Image.new('RGBA', (S, S), (0, 0, 0, 0))   # helemaal doorzichtig
+        px = img.load()
+        aantal = 2 + s * 2                     # in latere fases meer scheuren
+        for _ in range(aantal):
+            x = rng.randint(4, S - 5)
+            y = rng.randint(4, S - 5)
+            for _ in range(rng.randint(6, 14)):        # een kronkelige scheur
+                for dx, dy in ((0, 0), (1, 0), (0, 1)):   # ietsje dik maken
+                    xx, yy = x + dx, y + dy
+                    if 0 <= xx < S and 0 <= yy < S:
+                        px[xx, yy] = (25, 25, 25, 210)     # donkere, halfdoorzichtige scheur
+                x = max(0, min(S - 1, x + rng.choice((-1, 0, 1))))
+                y = max(0, min(S - 1, y + rng.choice((-1, 0, 1))))
+        groot = img.resize((GROOT, GROOT), Image.NEAREST)
+        groot.save(os.path.join(map_pad, f'barst_{s}.png'))
+    print(f"Klaar! {stages} barst-plaatjes gemaakt in {map_pad}")
+
+
 def maak_alle_textures():
     """Maakt alle plaatjes en zet ze (128x128) in de map assets/textures."""
     map_pad = os.path.join('assets', 'textures')
@@ -350,6 +373,9 @@ def maak_alle_textures():
 
     print(f"Klaar! {len(TEXTUUR_DEFS)} plaatjes gemaakt "
           f"(getekend op {S}x{S}, opgeslagen als {GROOT}x{GROOT}) in {map_pad}")
+
+    # De barst-plaatjes voor het hakken erbij maken
+    maak_barst_textures(map_pad)
 
 
 if __name__ == '__main__':

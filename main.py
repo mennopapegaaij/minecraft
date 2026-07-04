@@ -651,13 +651,9 @@ def herbouw_rond(pos):
             bouw_chunk_model(cx, cz)
 
 
-def breek_blok():
-    """Breekt het blok af waar je naar kijkt en stopt het in je rugzak."""
-    if mouse.world_point is None or mouse.world_normal is None:
-        return
-
-    # Klik je op een zelfgemaakt ding (deur, slab, hek...)? Haal dat dan weg
-    # en stop het terug in je rugzak.
+def sloop_speciaal():
+    """Sloopt een zelfgemaakt ding (deur, slab, hek...) waar je op klikt en
+    stopt het terug in je rugzak. Geeft True als er zoiets gesloopt is."""
     geklikt = mouse.hovered_entity
     if geklikt is not None and hasattr(geklikt, 'record'):
         record = geklikt.record
@@ -667,28 +663,38 @@ def breek_blok():
             speciaal.pop(c, None)
         geluid_afbreken.play()
         werk_hud_bij()
-        return
+        return True
+    return False
 
-    # Anders: een gewoon blok afbreken. Het blok zit net BINNEN het oppervlak.
+
+def doel_hak_blok():
+    """Welk gewoon wereld-blok kijk je op dit moment aan? (None = geen)."""
+    if mouse.world_point is None or mouse.world_normal is None:
+        return None
+    geklikt = mouse.hovered_entity
+    # Niet hakken op dieren/monsters of op zelfgemaakte dingen (deur/hek...)
+    if geklikt is None or isinstance(geklikt, Levend) or hasattr(geklikt, 'record'):
+        return None
     punt = mouse.world_point - mouse.world_normal * 0.5
     pos  = (round(punt.x), round(punt.y), round(punt.z))
-    if pos in wereld:
-        # Mooie ertsen zijn keihard: je pikhouweel moet sterk genoeg zijn!
-        nodig = ERTS_NIVEAU.get(wereld[pos], 0)
-        if nodig > pikhouweel_niveau:
-            toon_melding(f"Te hard! Hiervoor heb je een {PIKHOUWEEL_NAAM[nodig]} nodig.")
-            return
-        t = wereld.pop(pos)
-        cx, cz = chunk_van_pos(pos[0], pos[2])
-        chunk_blokken.get((cx, cz), {}).pop(pos, None)
-        weggehaald.add(pos)        # onthoud dat dit blok weg is (komt niet terug)
-        onthul_buren(pos)          # maak de blokken eronder/ernaast aan (geen void)
-        # In je rugzak stoppen (water pak je niet op). Je krijgt altijd 1 blok.
-        if t != 'water':
-            rugzak[t] = rugzak.get(t, 0) + 1
-            werk_hud_bij()
-        geluid_afbreken.play()
-        herbouw_rond(pos)
+    return pos if pos in wereld else None
+
+
+def voltooi_breken(pos):
+    """Haalt het blok echt weg (na genoeg hakken) en stopt het in je rugzak."""
+    if pos not in wereld:
+        return
+    t = wereld.pop(pos)
+    cx, cz = chunk_van_pos(pos[0], pos[2])
+    chunk_blokken.get((cx, cz), {}).pop(pos, None)
+    weggehaald.add(pos)        # onthoud dat dit blok weg is (komt niet terug)
+    onthul_buren(pos)          # maak de blokken eronder/ernaast aan (geen void)
+    # In je rugzak stoppen (water pak je niet op). Je krijgt altijd 1 blok.
+    if t != 'water':
+        rugzak[t] = rugzak.get(t, 0) + 1
+        werk_hud_bij()
+    geluid_afbreken.play()
+    herbouw_rond(pos)
 
 
 def plaats_blok():
@@ -893,13 +899,106 @@ class Monster(Levend):
 
 
 def linker_klik():
-    """Linkermuis: sla een dier/monster waar je naar kijkt, anders sloop een blok."""
+    """Linkermuis indrukken: sla een dier/monster, of sloop meteen een
+    zelfgemaakt ding. Gewone blokken hak je door de muis INGEDRUKT te houden
+    (dat regelt werk_hakken_bij elke frame)."""
     doel = mouse.hovered_entity
     if isinstance(doel, Levend):
         if (doel.world_position - speler.world_position).length() < 5:
             doel.raak(1)
         return
-    breek_blok()
+    sloop_speciaal()
+
+
+# ======================================================================
+#  HAKKEN (zoals Minecraft: muis ingedrukt houden, barsten, en het duurt even)
+# ======================================================================
+STANDAARD_HAK_TIJD = 0.75    # standaard duurt hakken zo lang (seconden)
+HAK_TIJDEN = {               # sommige blokken zijn zachter of harder
+    'blad': 0.2, 'paddenstoel': 0.2, 'sneeuw': 0.25, 'glas': 0.35,
+    'zand': 0.4, 'gras': 0.5, 'aarde': 0.5, 'klei': 0.5, 'mos': 0.5,
+    'pompoen': 0.7, 'planken': 0.8, 'hout': 0.9,
+    'zandsteen': 1.0, 'steen': 1.2, 'baksteen': 1.3, 'lava': 1.5,
+    'kool': 1.6, 'ijzer': 2.2, 'goud': 2.4, 'diamant': 2.8, 'smaragd': 2.8,
+}
+BARST_AANTAL = 5             # zoveel barst-plaatjes hebben we (barst_0 t/m barst_4)
+
+
+def bereken_hak_duur(bloktype):
+    """Hoe lang duurt het om dit bloktype te hakken? Met een pikhouweel sneller."""
+    duur = HAK_TIJDEN.get(bloktype, STANDAARD_HAK_TIJD)
+    if pikhouweel_niveau > 0:
+        duur *= 0.6          # met pikhouweel gaat hakken lekker vlot
+    return duur
+
+
+# De barst-plaatjes vooraf laden (scherpe pixels). barst_0 = klein beetje barst,
+# barst_4 = bijna kapot.
+BARST_TEXTUREN = [blok_texture(f'barst_{i}') for i in range(BARST_AANTAL)]
+
+# Het doorzichtige kubusje met barsten dat we OVER het blok leggen dat je hakt.
+# Iets groter (1.03) zodat het net vóór het blok zweeft (geen flikker).
+barst_overlay = Entity(model='cube', scale=1.03, enabled=False, color=color.white)
+barst_overlay.texture = BARST_TEXTUREN[0]
+
+hak_pos       = None     # welk blok hak je nu? (None = niks)
+hak_verstreken = 0.0     # hoe lang hak je er al op?
+hak_doel_duur  = 0.0     # hoe lang moet het totaal duren? (None = te hard)
+hak_fase       = -1      # welk barst-plaatje ligt er nu (om niet elke frame te wisselen)
+
+
+def stop_hakken():
+    """Stop met hakken en haal de barsten weg."""
+    global hak_pos, hak_verstreken, hak_doel_duur, hak_fase
+    hak_pos = None
+    hak_verstreken = 0.0
+    hak_doel_duur = 0.0
+    hak_fase = -1
+    barst_overlay.enabled = False
+
+
+def werk_hakken_bij():
+    """Elke frame: houd je de linkermuis ingedrukt op een blok? Dan hak je eraan.
+    Er groeien barsten, en na genoeg tijd breekt het blok."""
+    global hak_pos, hak_verstreken, hak_doel_duur, hak_fase
+
+    # Alleen hakken als de linkermuis ingedrukt is en het menu dicht is
+    bezig = held_keys['left mouse'] and not maaktafel.enabled
+    doel = doel_hak_blok() if bezig else None
+
+    if doel is None:                     # niks (meer) om te hakken
+        if hak_pos is not None:
+            stop_hakken()
+        return
+
+    if doel != hak_pos:                  # een NIEUW blok: opnieuw beginnen
+        hak_pos = doel
+        hak_verstreken = 0.0
+        hak_fase = -1
+        nodig = ERTS_NIVEAU.get(wereld.get(doel), 0)
+        if nodig > pikhouweel_niveau:    # te hard voor je pikhouweel
+            toon_melding(f"Te hard! Hiervoor heb je een {PIKHOUWEEL_NAAM[nodig]} nodig.")
+            hak_doel_duur = None
+        else:
+            hak_doel_duur = bereken_hak_duur(wereld[doel])
+
+    if hak_doel_duur is None:            # te hard: geen barsten, niets breken
+        barst_overlay.enabled = False
+        return
+
+    # Doorhakken: tijd optellen en de barsten laten groeien
+    hak_verstreken += time.dt
+    fase = int(hak_verstreken / hak_doel_duur * BARST_AANTAL)
+    fase = max(0, min(BARST_AANTAL - 1, fase))
+    barst_overlay.enabled = True
+    barst_overlay.position = hak_pos
+    if fase != hak_fase:                 # alleen wisselen als de fase verandert
+        hak_fase = fase
+        barst_overlay.texture = BARST_TEXTUREN[fase]
+
+    if hak_verstreken >= hak_doel_duur:  # klaar: het blok breekt!
+        voltooi_breken(hak_pos)
+        stop_hakken()
 
 
 # --- Startpositie ---
@@ -953,7 +1052,7 @@ window.fps_counter.enabled = True
 
 # --- Uitleg op het scherm ---
 Text(
-    text="Linker muis = slopen / slaan   Rechter muis = plaatsen   Muiswiel = ander blok\n"
+    text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op: 's NACHTS komen er monsters! Sla ze met de linkermuis. Hartjes = je levens.\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur open/dicht\n"
          "WASD = lopen   Spatie = springen   Escape = stoppen   F3 = meet-schermpje",
@@ -1309,6 +1408,9 @@ def update():
         vorige_zoek = zoekveld.text
         huidige_pagina = 0
         werk_maaktafel_bij()
+
+    # --- Hakken: linkermuis ingedrukt houden op een blok laat barsten groeien ---
+    werk_hakken_bij()
 
     # --- 's Nachts af en toe een nieuw monster laten verschijnen (niet te dichtbij) ---
     monster_timer += time.dt
