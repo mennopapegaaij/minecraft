@@ -284,18 +284,36 @@ def onthul_buren(pos):
             chunk_blokken.setdefault((cx, cz), {})[buur] = t
 
 
-def voeg_boom_toe(blokken, x, grond, z, rng):
-    """Zet een boom in de blokken-lijst van een stukje wereld."""
-    stam_h = rng.randint(3, 5)
+def voeg_boom_toe(blokken, x, grond, z, rng, stam='hout', blad='blad', soort='rond'):
+    """Zet een boom in de blokken-lijst van een stukje wereld.
+    'stam' en 'blad' bepalen de blokken; 'soort' bepaalt de vorm:
+    'den' = hoog en puntig (kerstboom), anders een ronde kruin."""
+    if soort == 'den':
+        # Dennenboom: hoge stam met een puntige, gelaagde kruin.
+        stam_h = rng.randint(5, 7)
+        for y in range(1, stam_h + 1):
+            blokken[(x, grond + y, z)] = stam
+        top = grond + stam_h
+        blokken[(x, top + 1, z)] = blad                    # het puntje bovenop
+        for i, straal in enumerate((1, 1, 2, 2)):          # ringen, breder naar onder
+            yy = top - i
+            for bx in range(-straal, straal + 1):
+                for bz in range(-straal, straal + 1):
+                    if abs(bx) + abs(bz) <= straal and not (bx == 0 and bz == 0):
+                        blokken[(x + bx, yy, z + bz)] = blad
+        return
+
+    # Ronde boom (eik, berk, kers): rechte stam met een bolvormige kruin.
+    stam_h = rng.randint(4, 6) if soort == 'berk' else rng.randint(3, 5)
     for y in range(1, stam_h + 1):
-        blokken[(x, grond + y, z)] = 'hout'
+        blokken[(x, grond + y, z)] = stam
     top = grond + stam_h
     for bx in range(-2, 3):
         for by in range(0, 4):
             for bz in range(-2, 3):
                 if abs(bx) + abs(bz) + abs(by) * 0.7 <= 2.5:
                     if not (bx == 0 and bz == 0 and by < 2):
-                        blokken[(x + bx, top + by, z + bz)] = 'blad'
+                        blokken[(x + bx, top + by, z + bz)] = blad
 
 
 def genereer_chunk_data(cx, cz):
@@ -330,8 +348,18 @@ def genereer_chunk_data(cx, cz):
             # Op het gras: soms een boom, of een paddenstoel.
             if blokken.get((x, grond, z)) == 'gras':
                 in_het_midden = 2 <= lx <= CHUNK_GROOTTE - 3 and 2 <= lz <= CHUNK_GROOTTE - 3
-                if in_het_midden and rng.random() < 0.05:
-                    voeg_boom_toe(blokken, x, grond, z, rng)   # bladeren binnen het stukje
+                if in_het_midden and rng.random() < 0.06:
+                    # Kies een boomsoort. Eik komt het vaakst voor, kers het minst.
+                    soort = rng.choices(['eik', 'berk', 'den', 'kers'],
+                                        weights=[5, 3, 3, 2])[0]
+                    if soort == 'eik':
+                        voeg_boom_toe(blokken, x, grond, z, rng, 'hout', 'blad', 'rond')
+                    elif soort == 'berk':
+                        voeg_boom_toe(blokken, x, grond, z, rng, 'mc_berk_stam', 'mc_berk_blad', 'berk')
+                    elif soort == 'den':
+                        voeg_boom_toe(blokken, x, grond, z, rng, 'mc_den_stam', 'mc_den_blad', 'den')
+                    else:
+                        voeg_boom_toe(blokken, x, grond, z, rng, 'mc_kers_stam', 'mc_kers_blad', 'kers')
                 elif rng.random() < 0.04:
                     blokken[(x, grond + 1, z)] = 'paddenstoel'  # klein paddenstoeltje
 
@@ -551,6 +579,16 @@ for _b in mc_blokken.NIEUWE_BLOKKEN:
     BLOK_KEUZES.append(_key)                          # je kunt het vasthouden en plaatsen
     RECEPTEN[_key] = {'kosten': _b['kosten'], 'maakt': 4,
                       'plaatsbaar': True, 'is_blok': True, 'hand': False}
+
+# De natuur-blokken (stammen en bladeren van bomen). Deze haal je uit bomen,
+# dus ze krijgen GEEN recept, maar je kunt ze wel vasthouden en plaatsen.
+for _b in mc_blokken.NATUUR_BLOKKEN:
+    _key = _b['key']
+    BLOK_TEXTUUR[_key] = _key
+    ITEM_NAMEN[_key]   = _b['naam']
+    _rgb = _basiskleur.get(_key, (150, 150, 150))
+    KLEUREN[_key]      = color.rgb(_rgb[0] / 255, _rgb[1] / 255, _rgb[2] / 255)
+    BLOK_KEUZES.append(_key)
 
 
 # We onthouden geladen plaatjes, zodat we ze maar één keer hoeven te laden.
@@ -916,8 +954,10 @@ def linker_klik():
 STANDAARD_HAK_TIJD = 0.75    # standaard duurt hakken zo lang (seconden)
 HAK_TIJDEN = {               # sommige blokken zijn zachter of harder
     'blad': 0.2, 'paddenstoel': 0.2, 'sneeuw': 0.25, 'glas': 0.35,
+    'mc_berk_blad': 0.2, 'mc_den_blad': 0.2, 'mc_kers_blad': 0.2,
     'zand': 0.4, 'gras': 0.5, 'aarde': 0.5, 'klei': 0.5, 'mos': 0.5,
     'pompoen': 0.7, 'planken': 0.8, 'hout': 0.9,
+    'mc_berk_stam': 0.9, 'mc_den_stam': 0.9, 'mc_kers_stam': 0.9,
     'zandsteen': 1.0, 'steen': 1.2, 'baksteen': 1.3, 'lava': 1.5,
     'kool': 1.6, 'ijzer': 2.2, 'goud': 2.4, 'diamant': 2.8, 'smaragd': 2.8,
 }

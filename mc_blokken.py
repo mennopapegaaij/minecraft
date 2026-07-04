@@ -55,7 +55,12 @@ TEXTUUR_DEFS = [
     {'naam': 'mc_berk_planken',  'stijl': 'planks', 'c1': (210, 195, 150),'c2': (180, 165, 120)},
     {'naam': 'mc_den_stam',      'stijl': 'bark',   'c1': (85, 60, 40),   'c2': (55, 38, 25)},
     {'naam': 'mc_den_planken',   'stijl': 'planks', 'c1': (110, 80, 55),  'c2': (85, 60, 40)},
+    {'naam': 'mc_kers_stam',     'stijl': 'bark',   'c1': (95, 72, 78),   'c2': (68, 50, 55)},
+    {'naam': 'mc_kers_planken',  'stijl': 'planks', 'c1': (208, 150, 150),'c2': (178, 120, 122)},
     {'naam': 'mc_blad',          'stijl': 'leaves', 'c1': (45, 120, 45),  'c2': (30, 90, 30)},
+    {'naam': 'mc_berk_blad',     'stijl': 'leaves', 'c1': (120, 170, 80), 'c2': (90, 145, 60)},
+    {'naam': 'mc_den_blad',      'stijl': 'leaves', 'c1': (32, 78, 46),   'c2': (20, 55, 32)},
+    {'naam': 'mc_kers_blad',     'stijl': 'leaves', 'c1': (240, 175, 205),'c2': (222, 140, 185)},
     {'naam': 'mc_boekenkast',    'stijl': 'bookshelf','c1': (165, 130, 80),'c2': (110, 80, 50)},
 
     # --- Baksteen en gemaakte blokken ---
@@ -109,10 +114,9 @@ NIEUWE_BLOKKEN = [
     {'key': 'mc_lapis_erts',      'naam': 'Lapiserts',          'kosten': {'steen': 2}},
     {'key': 'mc_redstone_erts',   'naam': 'Redstone-erts',      'kosten': {'steen': 2}},
     {'key': 'mc_ijs',             'naam': 'IJs',                'kosten': {'sneeuw': 2}},
-    {'key': 'mc_berk_stam',       'naam': 'Berkenstam',         'kosten': {'hout': 2}},
-    {'key': 'mc_berk_planken',    'naam': 'Berken planken',     'kosten': {'hout': 1}},
-    {'key': 'mc_den_stam',        'naam': 'Dennenstam',         'kosten': {'hout': 2}},
-    {'key': 'mc_den_planken',     'naam': 'Dennen planken',     'kosten': {'hout': 1}},
+    {'key': 'mc_berk_planken',    'naam': 'Berken planken',     'kosten': {'mc_berk_stam': 1}},
+    {'key': 'mc_den_planken',     'naam': 'Dennen planken',     'kosten': {'mc_den_stam': 1}},
+    {'key': 'mc_kers_planken',    'naam': 'Kersen planken',     'kosten': {'mc_kers_stam': 1}},
     {'key': 'mc_boekenkast',      'naam': 'Boekenkast',         'kosten': {'hout': 3}},
     {'key': 'mc_stenen_baksteen', 'naam': 'Stenen baksteen',    'kosten': {'steen': 2}},
     {'key': 'mc_netherbaksteen',  'naam': 'Netherbaksteen',     'kosten': {'steen': 2}},
@@ -135,4 +139,17 @@ NIEUWE_BLOKKEN = [
     {'key': 'mc_wol_blauw',       'naam': 'Blauwe wol',         'kosten': {'blad': 1}},
     {'key': 'mc_wol_groen',       'naam': 'Groene wol',         'kosten': {'blad': 1}},
     {'key': 'mc_wol_geel',        'naam': 'Gele wol',           'kosten': {'blad': 1}},
+]
+
+
+# ---- Natuur-blokken: die haal je uit bomen (niet in de maak-tafel te maken) ----
+# De stammen en bladeren van de verschillende boomsoorten. Je kunt ze wel
+# plaatsen om mee te bouwen, en van een stam maak je planken.
+NATUUR_BLOKKEN = [
+    {'key': 'mc_berk_stam', 'naam': 'Berkenstam'},
+    {'key': 'mc_den_stam',  'naam': 'Dennenstam'},
+    {'key': 'mc_kers_stam', 'naam': 'Kersenstam'},
+    {'key': 'mc_berk_blad', 'naam': 'Berkenblad'},
+    {'key': 'mc_den_blad',  'naam': 'Dennenblad'},
+    {'key': 'mc_kers_blad', 'naam': 'Kersenbloesem'},
 ]
