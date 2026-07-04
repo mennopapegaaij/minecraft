@@ -304,7 +304,8 @@ def steen_of_erts(x, y, z):
     if y <=  2 and r < 0.034:  return 'smaragd'
     if y <=  4 and r < 0.054:  return 'goud'
     if y <= 12 and r < 0.090:  return 'ijzer'
-    if            r < 0.140:   return 'kool'       # kool kom je overal tegen
+    if y <= 10 and r < 0.125:  return 'redstone_erts'   # redstone: redelijk diep
+    if            r < 0.155:   return 'kool'       # kool kom je overal tegen
     return 'steen'
 
 
@@ -498,9 +499,11 @@ def genereer_chunk_data(cx, cz):
         blokken.pop(pos, None)
 
     chunk_blokken[(cx, cz)] = blokken
-    # Zet alle blokken ook in het grote telefoonboek
+    # Zet alle blokken ook in het grote telefoonboek (en houd redstone-blokken bij)
     for pos, t in blokken.items():
         wereld[pos] = t
+        if t in DRAAD_TYPES or t in LAMP_TYPES or t == 'redstone_blok':
+            registreer_redstone_blok(pos, t, True)
 
 
 LICHT_MARGE = 6      # hoeveel blokken buiten de chunk we meenemen (licht van buren)
@@ -648,8 +651,10 @@ def vergeet_chunk(cx, cz):
     """Gooit een stukje wereld helemaal weg: het model én de getallen."""
     verwijder_chunk_model(cx, cz)
     blokken = chunk_blokken.pop((cx, cz), {})
-    for pos in blokken:
+    for pos, t in blokken.items():
         wereld.pop(pos, None)
+        if t in DRAAD_TYPES or t in LAMP_TYPES or t == 'redstone_blok':
+            registreer_redstone_blok(pos, t, False)
 
 
 # --- Zelfgemaakte dingen (specials) ---
@@ -663,6 +668,8 @@ ITEM_NAMEN = {
     'maaktafel': 'Maak-tafel',
     'slab': 'Halve blok', 'valluik': 'Valluik', 'trap': 'Traptrede',
     'hek': 'Hek', 'deur': 'Deur',
+    'hefboom': 'Hefboom (schakelaar)',
+    'piston': 'Piston', 'kleverige_piston': 'Kleverige piston',
     'stenen_pikhouweel': 'Stenen pikhouweel',
     'ijzeren_pikhouweel': 'IJzeren pikhouweel',
     'gouden_pikhouweel': 'Gouden pikhouweel',
@@ -679,6 +686,10 @@ RECEPTEN = {
     'trap':       {'kosten': {'steen': 6},            'maakt': 4, 'plaatsbaar': True},
     'hek':        {'kosten': {'hout': 4},             'maakt': 4, 'plaatsbaar': True},
     'deur':       {'kosten': {'hout': 6},             'maakt': 1, 'plaatsbaar': True},
+    # Redstone-machines (bij een maak-tafel):
+    'hefboom':          {'kosten': {'steen': 1, 'hout': 1},                'maakt': 1, 'plaatsbaar': True},
+    'piston':           {'kosten': {'hout': 3, 'steen': 4, 'ijzer': 1},    'maakt': 1, 'plaatsbaar': True},
+    'kleverige_piston': {'kosten': {'hout': 3, 'steen': 4, 'ijzer': 1, 'blad': 1}, 'maakt': 1, 'plaatsbaar': True},
     # De pikhouweel-ketting: elke pikhouweel kan een mooier erts hakken.
     # 'niveau' = hoe sterk hij is (zie ERTS_NIVEAU hierboven).
     'stenen_pikhouweel':    {'kosten': {'steen': 3,   'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 1},
@@ -725,6 +736,54 @@ for _b in mc_blokken.NATUUR_BLOKKEN:
     BLOK_KEUZES.append(_key)
 
 
+# ============================================================================
+#  REDSTONE-BLOKKEN 🔴⚡ (het elektrische spul)
+# ============================================================================
+# Welk bloktype gebruikt welk plaatje. De '..._aan' blokken zijn de 'aan'-stand
+# (die maakt het spel zelf; die kun je niet vasthouden of maken).
+_RS_TEXTUUR = {
+    'redstone_erts':        'mc_redstone_erts',
+    'redstone_blok':        'mc_redstone_blok',
+    'redstone_lamp':        'mc_redstone_lamp',
+    'redstone_lamp_aan':    'mc_redstone_lamp_aan',
+    'redstone_draad':       'mc_redstone_draad',
+    'redstone_draad_aan':   'mc_redstone_draad_aan',
+}
+_RS_NAAM = {
+    'redstone_erts':      'Redstone-erts',
+    'redstone_blok':      'Redstoneblok',
+    'redstone_lamp':      'Redstonelamp',
+    'redstone_lamp_aan':  'Redstonelamp (aan)',
+    'redstone_draad':     'Redstone-draad',
+    'redstone_draad_aan': 'Redstone-draad (aan)',
+}
+for _key, _tex in _RS_TEXTUUR.items():
+    BLOK_TEXTUUR[_key] = _tex
+    ITEM_NAMEN[_key]   = _RS_NAAM[_key]
+    _rgb = _basiskleur.get(_tex, (150, 150, 150))
+    KLEUREN[_key]      = color.rgb(_rgb[0] / 255, _rgb[1] / 255, _rgb[2] / 255)
+
+# Deze redstone-blokken kun je vasthouden en plaatsen (de '..._aan' niet).
+for _key in ('redstone_erts', 'redstone_blok', 'redstone_lamp', 'redstone_draad'):
+    BLOK_KEUZES.append(_key)
+
+# Recepten om redstone-dingen te maken (redstone_erts haal je uit de grond).
+RECEPTEN['redstone_blok']  = {'kosten': {'redstone_erts': 4}, 'maakt': 1,
+                              'plaatsbaar': True, 'is_blok': True, 'hand': False}
+RECEPTEN['redstone_lamp']  = {'kosten': {'redstone_erts': 1, 'glas': 1}, 'maakt': 1,
+                              'plaatsbaar': True, 'is_blok': True, 'hand': False}
+RECEPTEN['redstone_draad'] = {'kosten': {'redstone_erts': 1}, 'maakt': 4,
+                              'plaatsbaar': True, 'is_blok': True, 'hand': False}
+
+# De '..._aan' blokken horen bij hun 'uit'-versie (om terug te geven bij slopen).
+REDSTONE_BASIS = {
+    'redstone_lamp_aan':  'redstone_lamp',
+    'redstone_draad_aan': 'redstone_draad',
+}
+DRAAD_TYPES = {'redstone_draad', 'redstone_draad_aan'}
+LAMP_TYPES  = {'redstone_lamp', 'redstone_lamp_aan'}
+
+
 # We onthouden geladen plaatjes, zodat we ze maar één keer hoeven te laden.
 _textuur_geheugen = {}
 
@@ -742,13 +801,41 @@ def blok_texture(naam):
     return _textuur_geheugen[naam]
 
 
-def maak_speciaal_model(naam, pos, richting=0):
+def maak_speciaal_model(naam, pos, richting=0, uit=False):
     """Bouwt het 3D-model van een zelfgemaakt ding op plek pos.
     Geeft twee dingen terug: het model om weg te gooien bij afbreken, en
-    het deel waar je op klikt (bij een deur is dat het paneel)."""
+    het deel waar je op klikt (bij een deur is dat het paneel).
+    'uit' = staat de piston uitgeschoven?"""
     x, y, z = pos
     hout  = KLEUREN['planken']   # houtkleur voor de houten dingen
     steen = KLEUREN['steen']
+
+    if naam == 'hefboom':         # een schakelaar: een plaatje met een stokje
+        ouder = Entity(position=pos, collider='box')
+        Entity(parent=ouder, model='cube', texture='white_cube', color=steen,
+               position=(0, -0.4, 0), scale=(0.5, 0.2, 0.5))          # het plaatje
+        stick = Entity(parent=ouder, model='cube', texture='white_cube',
+                       color=color.rgb(0.55, 0.32, 0.16), position=(0, -0.15, 0),
+                       scale=(0.14, 0.7, 0.14), origin_y=-0.5, rotation_x=28)
+        ouder.stick = stick       # het stokje kunnen we omzetten (aan/uit)
+        return ouder, ouder
+
+    if naam in ('piston', 'kleverige_piston'):
+        kleverig = (naam == 'kleverige_piston')
+        kop = color.rgb(0.45, 0.75, 0.35) if kleverig else color.rgb(0.78, 0.68, 0.5)
+        ouder = Entity(position=pos, rotation_y=richting)
+        Entity(parent=ouder, model='cube', color=steen, position=(0, 0, 0))   # het lijf
+        Entity(parent=ouder, model='cube', color=kop,                          # de voorkant
+               position=(0, 0, 0.45), scale=(0.9, 0.9, 0.12))
+        if uit:                    # uitgeschoven: een arm met een kopje eraan
+            Entity(parent=ouder, model='cube', color=steen,
+                   position=(0, 0, 1.0), scale=(0.3, 0.3, 1.0))
+            Entity(parent=ouder, model='cube', color=kop,
+                   position=(0, 0, 1.45), scale=(0.9, 0.9, 0.12))
+        ouder.combine(auto_destroy=True)
+        ouder.texture = 'white_cube'
+        ouder.collider = 'mesh'
+        return ouder, ouder
 
     if naam == 'slab':            # een halve blok: ligt op de bodem van het vakje
         ent = Entity(model='cube', texture='white_cube', color=steen,
@@ -804,7 +891,7 @@ def plaats_speciaal(naam, pos, richting):
             return False
     model, klik = maak_speciaal_model(naam, pos, richting)
     record = {'naam': naam, 'model': model, 'cellen': cellen,
-              'open': False, 'richting': richting}
+              'open': False, 'richting': richting, 'aan': False, 'uit': False}
     klik.record = record          # zo weten we later: hier klikte je op dit ding
     for c in cellen:
         speciaal[c] = record
@@ -835,6 +922,8 @@ def sloop_speciaal():
             speciaal.pop(c, None)
         geluid_afbreken.play()
         werk_hud_bij()
+        if record['naam'] in ('hefboom', 'piston', 'kleverige_piston'):
+            werk_redstone_bij()          # stroom opnieuw uitrekenen
         return True
     return False
 
@@ -860,13 +949,20 @@ def voltooi_breken(pos):
     cx, cz = chunk_van_pos(pos[0], pos[2])
     chunk_blokken.get((cx, cz), {}).pop(pos, None)
     markeer_weg(pos)           # onthoud dat dit blok weg is (ook voor opslaan)
+    # Was het een redstone-blok? Uit de lijst halen (straks stroom herberekenen).
+    was_redstone = t in DRAAD_TYPES or t in LAMP_TYPES or t == 'redstone_blok'
+    if was_redstone:
+        registreer_redstone_blok(pos, t, False)
     onthul_buren(pos)          # maak de blokken eronder/ernaast aan (geen void)
-    # In je rugzak stoppen (water pak je niet op). Je krijgt altijd 1 blok.
+    # In je rugzak stoppen (water pak je niet op). Een aan-blok geeft z'n gewone versie.
     if t != 'water':
-        rugzak[t] = rugzak.get(t, 0) + 1
+        gekregen = REDSTONE_BASIS.get(t, t)
+        rugzak[gekregen] = rugzak.get(gekregen, 0) + 1
         werk_hud_bij()
     geluid_afbreken.play()
     herbouw_rond(pos)
+    if was_redstone:
+        werk_redstone_bij()
 
 
 def plaats_blok():
@@ -889,6 +985,8 @@ def plaats_blok():
             rugzak[naam] -= 1
             geluid_plaatsen.play()
             werk_hud_bij()
+            if naam in ('hefboom', 'piston', 'kleverige_piston'):
+                werk_redstone_bij()
         return
 
     # Anders: een gewoon blok plaatsen
@@ -898,20 +996,210 @@ def plaats_blok():
     cx, cz = chunk_van_pos(pos[0], pos[2])
     chunk_blokken.setdefault((cx, cz), {})[pos] = naam
     markeer_extra(pos, naam)   # onthoud dat je hier een blok plaatste (ook voor opslaan)
+    if naam in DRAAD_TYPES or naam in LAMP_TYPES or naam == 'redstone_blok':
+        registreer_redstone_blok(pos, naam, True)
+        werk_redstone_bij()
     rugzak[naam] -= 1          # het blok gaat uit je rugzak
     geluid_plaatsen.play()
     werk_hud_bij()
     herbouw_rond(pos)
 
 
+# ======================================================================
+#  REDSTONE-MOTOR ⚡ (stroom door draden, lampen aan, pistons duwen)
+# ======================================================================
+redstone_draad_cellen = set()   # alle plekken met redstone-draad
+redstone_lamp_cellen  = set()   # alle plekken met een redstonelamp
+redstone_blok_cellen  = set()   # alle plekken met een redstoneblok (stroombron)
+redstone_moet_update  = False   # moeten we de stroom opnieuw uitrekenen?
+
+
+def registreer_redstone_blok(pos, bloktype, erbij):
+    """Houd de redstone-lijsten bij als er een blok bij komt of weg gaat."""
+    global redstone_moet_update
+    if bloktype in DRAAD_TYPES:
+        lijst = redstone_draad_cellen
+    elif bloktype in LAMP_TYPES:
+        lijst = redstone_lamp_cellen
+    elif bloktype == 'redstone_blok':
+        lijst = redstone_blok_cellen
+    else:
+        return
+    lijst.add(pos) if erbij else lijst.discard(pos)
+    redstone_moet_update = True
+
+
+def _zet_bloktype(pos, nieuw):
+    """Verandert stil het bloktype op een plek (bv draad -> draad_aan)."""
+    cx, cz = chunk_van_pos(pos[0], pos[2])
+    wereld[pos] = nieuw
+    chunk_blokken.setdefault((cx, cz), {})[pos] = nieuw
+    extra_blokken[pos] = nieuw
+    extra_index[(cx, cz)][pos] = nieuw
+
+
+def _unieke_specials():
+    """Alle zelfgemaakte dingen, elk maar één keer (deuren hebben 2 cellen)."""
+    gezien, uit = set(), []
+    for rec in speciaal.values():
+        if id(rec) not in gezien:
+            gezien.add(id(rec))
+            uit.append(rec)
+    return uit
+
+
+def _voor_vector(richting):
+    """De richting (x, y, z) waar een piston naartoe wijst."""
+    r = math.radians(richting)
+    return (round(math.sin(r)), 0, round(math.cos(r)))
+
+
+def _verplaats_blok(van, naar, te_herbouwen):
+    """Verplaatst een gewoon blok van 'van' naar 'naar' (voor een piston)."""
+    t = wereld.pop(van)
+    cxv, czv = chunk_van_pos(van[0], van[2])
+    chunk_blokken.get((cxv, czv), {}).pop(van, None)
+    markeer_weg(van)
+    registreer_redstone_blok(van, t, False)
+    wereld[naar] = t
+    cxn, czn = chunk_van_pos(naar[0], naar[2])
+    chunk_blokken.setdefault((cxn, czn), {})[naar] = t
+    markeer_extra(naar, t)
+    registreer_redstone_blok(naar, t, True)
+    te_herbouwen.add((cxv, czv))
+    te_herbouwen.add((cxn, czn))
+
+
+def _herteken_piston(rec):
+    """Tekent een piston opnieuw (in- of uitgeschoven)."""
+    destroy(rec['model'])
+    model, klik = maak_speciaal_model(rec['naam'], rec['cellen'][0],
+                                      rec['richting'], uit=rec['uit'])
+    klik.record = rec
+    rec['model'] = model
+
+
+def _piston_uit(rec, te_herbouwen):
+    """Schuift een piston uit en duwt het blok ervoor één plek weg."""
+    pos = rec['cellen'][0]
+    vx, vy, vz = _voor_vector(rec['richting'])
+    front  = (pos[0] + vx, pos[1] + vy, pos[2] + vz)
+    front2 = (front[0] + vx, front[1] + vy, front[2] + vz)
+    if front in speciaal:
+        return                          # er staat een ander ding voor
+    geduwd = False
+    if front in wereld:
+        if front2 not in wereld and front2 not in speciaal:
+            _verplaats_blok(front, front2, te_herbouwen)
+            geduwd = True
+        else:
+            return                      # blok voor de piston kan nergens heen
+    rec['uit'] = True
+    rec['geduwd'] = geduwd
+    if front not in rec['cellen']:
+        rec['cellen'].append(front)
+    speciaal[front] = rec               # armcel bezet houden
+    _herteken_piston(rec)
+    te_herbouwen.add(chunk_van_pos(pos[0], pos[2]))
+
+
+def _piston_in(rec, te_herbouwen):
+    """Schuift een piston in; een kleverige piston trekt het blok weer terug."""
+    pos = rec['cellen'][0]
+    vx, vy, vz = _voor_vector(rec['richting'])
+    front  = (pos[0] + vx, pos[1] + vy, pos[2] + vz)
+    front2 = (front[0] + vx, front[1] + vy, front[2] + vz)
+    if (rec['naam'] == 'kleverige_piston' and rec.get('geduwd')
+            and front2 in wereld and front not in wereld):
+        _verplaats_blok(front2, front, te_herbouwen)
+    rec['uit'] = False
+    rec['geduwd'] = False
+    if front in rec['cellen'] and front != pos:
+        rec['cellen'].remove(front)
+    if speciaal.get(front) is rec:
+        del speciaal[front]
+    _herteken_piston(rec)
+    te_herbouwen.add(chunk_van_pos(pos[0], pos[2]))
+
+
+def werk_redstone_bij():
+    """Rekent de hele redstone opnieuw uit: welke draden staan aan, welke lampen
+    branden en welke pistons schuiven uit. Aanroepen als er iets verandert."""
+    global redstone_moet_update
+    redstone_moet_update = False
+
+    # 1. Stroombronnen: redstoneblokken + hefbomen die AAN staan.
+    bron_cellen = set(redstone_blok_cellen)
+    for rec in _unieke_specials():
+        if rec['naam'] == 'hefboom' and rec.get('aan'):
+            bron_cellen.add(rec['cellen'][0])
+
+    # 2. Stroom door de draden laten stromen (elke stap 1 minder, tot 0).
+    power = {}
+    rij = collections.deque()
+    for d in redstone_draad_cellen:
+        if any((d[0] + bx, d[1] + by, d[2] + bz) in bron_cellen for bx, by, bz in BUREN):
+            power[d] = 15
+            rij.append(d)
+    while rij:
+        d = rij.popleft()
+        p = power[d]
+        if p <= 1:
+            continue
+        for bx, by, bz in BUREN:
+            n = (d[0] + bx, d[1] + by, d[2] + bz)
+            if n in redstone_draad_cellen and power.get(n, 0) < p - 1:
+                power[n] = p - 1
+                rij.append(n)
+    aan_draad = set(power)
+
+    def krijgt_stroom(p):
+        for bx, by, bz in BUREN:
+            n = (p[0] + bx, p[1] + by, p[2] + bz)
+            if n in bron_cellen or n in aan_draad:
+                return True
+        return False
+
+    te_herbouwen = set()
+
+    # 3. Draden aan/uit (kleur) zetten.
+    for d in redstone_draad_cellen:
+        gewenst = 'redstone_draad_aan' if d in aan_draad else 'redstone_draad'
+        if wereld.get(d) != gewenst:
+            _zet_bloktype(d, gewenst)
+            te_herbouwen.add(chunk_van_pos(d[0], d[2]))
+
+    # 4. Lampen aan/uit zetten.
+    for l in redstone_lamp_cellen:
+        gewenst = 'redstone_lamp_aan' if krijgt_stroom(l) else 'redstone_lamp'
+        if wereld.get(l) != gewenst:
+            _zet_bloktype(l, gewenst)
+            te_herbouwen.add(chunk_van_pos(l[0], l[2]))
+
+    # 5. Pistons in-/uitschuiven.
+    for rec in _unieke_specials():
+        if rec['naam'] in ('piston', 'kleverige_piston'):
+            aan = krijgt_stroom(rec['cellen'][0])
+            if aan and not rec['uit']:
+                _piston_uit(rec, te_herbouwen)
+            elif not aan and rec['uit']:
+                _piston_in(rec, te_herbouwen)
+
+    # 6. De veranderde stukjes opnieuw tekenen.
+    for c in te_herbouwen:
+        if c in chunk_modellen:
+            bouw_chunk_model(*c)
+
+
 def sla_op(stil=False):
     """Slaat de wereld op in een bestandje, zodat je later verder kunt spelen.
     stil=True = geen melding op het scherm (voor automatisch opslaan)."""
-    # De zelfgemaakte dingen (deuren, hekken...) verzamelen, elk maar één keer.
+    # De zelfgemaakte dingen (deuren, hekken, hefbomen...) verzamelen, elk 1x.
     unieke = {}
     for rec in speciaal.values():
         unieke[tuple(rec['cellen'][0])] = rec
-    spec = [{'naam': r['naam'], 'pos': list(p), 'richting': r['richting']}
+    spec = [{'naam': r['naam'], 'pos': list(p), 'richting': r['richting'],
+             'aan': r.get('aan', False)}
             for p, r in unieke.items()]
 
     data = {
@@ -1262,7 +1550,7 @@ window.fps_counter.enabled = True
 Text(
     text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op: 's NACHTS komen er monsters! Sla ze met de linkermuis. Hartjes = je levens.\n"
-         "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur open/dicht\n"
+         "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur / hefboom aan-uit\n"
          "WASD = lopen   O = opslaan   M = werelden (andere/nieuwe wereld)   Escape = opslaan & stoppen",
     position=(-0.85, 0.47),
     scale=1.1,
@@ -1734,13 +2022,21 @@ nieuwe_wereld_knop.on_click = maak_nieuwe_wereld
 
 
 def toggle_deur():
-    """Doet de deur waar je naar kijkt open of dicht."""
+    """Doet de deur open/dicht, of zet een hefboom aan/uit (met de F-toets)."""
     ent = mouse.hovered_entity
-    if ent is not None and hasattr(ent, 'record') and ent.record['naam'] == 'deur':
-        rec = ent.record
+    if ent is None or not hasattr(ent, 'record'):
+        return
+    rec = ent.record
+    if rec['naam'] == 'deur':
         rec['open'] = not rec['open']
         doel = rec['richting'] + (90 if rec['open'] else 0)
         rec['model'].animate('rotation_y', doel, duration=0.2)
+    elif rec['naam'] == 'hefboom':
+        rec['aan'] = not rec['aan']       # schakelaar omzetten
+        stick = getattr(rec['model'], 'stick', None)
+        if stick is not None:
+            stick.animate('rotation_x', -28 if rec['aan'] else 28, duration=0.15)
+        werk_redstone_bij()               # stroom aan/uit!
 
 
 # --- Meet-schermpje (linksonder) ---
@@ -1765,6 +2061,13 @@ if OPGESLAGEN:
     # De zelfgemaakte dingen (deuren, hekken, slabs...) terugzetten
     for _s in OPGESLAGEN.get('speciaal', []):
         plaats_speciaal(_s['naam'], tuple(_s['pos']), _s['richting'])
+        if _s.get('aan'):                    # een hefboom die aan stond
+            _rec = speciaal.get(tuple(_s['pos']))
+            if _rec:
+                _rec['aan'] = True
+                _stick = getattr(_rec['model'], 'stick', None)
+                if _stick is not None:
+                    _stick.rotation_x = -28
     # De stukjes rondom de speler meteen bouwen zodat hij niet in de leegte valt
     _pc = chunk_van_pos(speler.x, speler.z)
     for _dcx in range(-1, 2):
@@ -1772,6 +2075,7 @@ if OPGESLAGEN:
             bouw_chunk_model(_pc[0] + _dcx, _pc[1] + _dcz)
     werk_hud_bij()
     werk_pikhouweel_hud()
+    werk_redstone_bij()                      # redstone opnieuw uitrekenen na laden
 
 
 def update():
@@ -1793,6 +2097,10 @@ def update():
 
     # --- Hakken: linkermuis ingedrukt houden op een blok laat barsten groeien ---
     werk_hakken_bij()
+
+    # --- Redstone opnieuw uitrekenen als er iets veranderd is (bv nieuw stukje) ---
+    if redstone_moet_update:
+        werk_redstone_bij()
 
     # --- 's Nachts af en toe een nieuw monster laten verschijnen (niet te dichtbij) ---
     monster_timer += time.dt

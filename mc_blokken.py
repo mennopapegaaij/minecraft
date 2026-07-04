@@ -88,6 +88,13 @@ TEXTUUR_DEFS = [
     {'naam': 'mc_kool_blok',    'stijl': 'speckle','c1': (35, 35, 38),  'var': 8},
     {'naam': 'mc_lapis_blok',   'stijl': 'speckle','c1': (40, 70, 200), 'var': 18},
 
+    # --- Redstone (het elektrische spul!) ---
+    {'naam': 'mc_redstone_blok',      'stijl': 'speckle', 'c1': (185, 25, 25),  'var': 14},
+    {'naam': 'mc_redstone_lamp',      'stijl': 'speckle', 'c1': (120, 80, 55),  'var': 12},
+    {'naam': 'mc_redstone_lamp_aan',  'stijl': 'glow',    'c1': (235, 185, 90), 'c2': (255, 240, 175)},
+    {'naam': 'mc_redstone_draad',     'stijl': 'speckle', 'c1': (110, 25, 25),  'var': 16},
+    {'naam': 'mc_redstone_draad_aan', 'stijl': 'speckle', 'c1': (235, 45, 45),  'var': 22},
+
     # --- Planten en eten ---
     {'naam': 'mc_pompoen',          'stijl': 'pumpkin', 'c1': (225, 135, 30),'c2': (180, 100, 20)},
     {'naam': 'mc_meloen',           'stijl': 'stripes', 'c1': (60, 140, 50), 'c2': (120, 180, 70)},
