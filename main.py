@@ -683,10 +683,9 @@ def breek_blok():
         chunk_blokken.get((cx, cz), {}).pop(pos, None)
         weggehaald.add(pos)        # onthoud dat dit blok weg is (komt niet terug)
         onthul_buren(pos)          # maak de blokken eronder/ernaast aan (geen void)
-        # In je rugzak stoppen (water pak je niet op). Met pikhouweel krijg je 2!
+        # In je rugzak stoppen (water pak je niet op). Je krijgt altijd 1 blok.
         if t != 'water':
-            aantal = 2 if pikhouweel_niveau > 0 else 1
-            rugzak[t] = rugzak.get(t, 0) + aantal
+            rugzak[t] = rugzak.get(t, 0) + 1
             werk_hud_bij()
         geluid_afbreken.play()
         herbouw_rond(pos)
