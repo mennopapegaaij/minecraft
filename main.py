@@ -217,6 +217,12 @@ rugzak = {}
 # Het blok of ding dat je nu vasthoudt om te plaatsen (None = niks)
 vastgehouden = None
 
+# De eigen vololgorde van je hotbar (kun je zelf wisselen met de pijltjestoetsen).
+hotbar_volgorde = []
+
+# Voor dubbel-spatie om te gaan vliegen (creatief): telt af na een spatie-tik.
+spatie_timer = 0.0
+
 # Hoe sterk is je pikhouweel? 0 = nog geen, 1 = stenen, 2 = ijzeren,
 # 3 = gouden, 4 = smaragden. Hoe hoger, hoe meer je kunt hakken.
 pikhouweel_niveau = 0
@@ -1220,6 +1226,7 @@ def sla_op(stil=False):
         'speciaal': spec,
         'rugzak': rugzak,
         'pikhouweel': pikhouweel_niveau,
+        'hotbar': hotbar_volgorde,
         'speler': [speler.x, speler.y, speler.z, speler.rotation_y, camera.rotation_x],
         'dag_tijd': dag_tijd,
     }
@@ -1577,7 +1584,8 @@ Text(
     text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op: 's NACHTS komen er monsters! Sla ze met de linkermuis. Hartjes = je levens.\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur / hefboom aan-uit\n"
-         "WASD = lopen   O = opslaan   M = werelden (andere/nieuwe wereld)   Escape = opslaan & stoppen",
+         "WASD = lopen   1-9/muiswiel = kies blok   Pijltjes = blok verschuiven   Dubbel-spatie = vliegen (creatief)\n"
+         "O = opslaan   M = werelden (andere/nieuwe wereld)   Escape = opslaan & stoppen",
     position=(-0.85, 0.47),
     scale=1.1,
     background=True,
@@ -1630,18 +1638,31 @@ def is_item(naam):
 
 
 def beschikbaar():
-    """Alle dingen die je in je rugzak hebt om te plaatsen, in een nette
-    vaste volgorde. (De pikhouweel zit er niet bij, die plaats je niet.)"""
-    # Gewone/natuur-blokken (BLOK_KEUZES) + alles wat je kunt maken en plaatsen
-    # (gekleurde blokken, deuren, slabs...). Dubbele namen halen we eruit.
-    volgorde = list(BLOK_KEUZES) + [n for n in RECEPTEN if RECEPTEN[n]['plaatsbaar']]
-    gezien = set()
-    uniek = []
-    for n in volgorde:
-        if n not in gezien:
-            gezien.add(n)
-            uniek.append(n)
-    return [n for n in uniek if rugzak.get(n, 0) > 0]
+    """Alle dingen die je in je rugzak hebt om te plaatsen, in JOUW hotbar-volgorde
+    (die je zelf kunt veranderen). Nieuwe blokken komen achteraan."""
+    # Alle plaatsbare dingen (gewone/natuur-blokken + maakbare deuren/slabs/...).
+    basis = list(BLOK_KEUZES) + [n for n in RECEPTEN if RECEPTEN[n]['plaatsbaar']]
+    # Zet nieuwe soorten achteraan in je eigen volgorde (zonder dubbelen).
+    for n in basis:
+        if n not in hotbar_volgorde:
+            hotbar_volgorde.append(n)
+    return [n for n in hotbar_volgorde if rugzak.get(n, 0) > 0]
+
+
+def verplaats_in_hotbar(richting):
+    """Schuift het blok dat je vasthoudt een plekje op in de hotbar
+    (richting -1 = naar links, +1 = naar rechts)."""
+    spullen = beschikbaar()
+    if vastgehouden not in spullen:
+        return
+    i = spullen.index(vastgehouden)
+    j = i + richting
+    if 0 <= j < len(spullen):
+        # Verwissel deze twee blokken van plek in je eigen volgorde.
+        a, b = spullen[i], spullen[j]
+        ia, ib = hotbar_volgorde.index(a), hotbar_volgorde.index(b)
+        hotbar_volgorde[ia], hotbar_volgorde[ib] = hotbar_volgorde[ib], hotbar_volgorde[ia]
+        werk_hud_bij()
 
 
 def werk_hud_bij():
@@ -2221,6 +2242,7 @@ autosave_timer = 0.0      # om af en toe automatisch op te slaan
 if OPGESLAGEN:
     rugzak.clear()
     rugzak.update(OPGESLAGEN.get('rugzak', {}))
+    hotbar_volgorde[:] = OPGESLAGEN.get('hotbar', [])   # jouw eigen hotbar-volgorde
     pikhouweel_niveau = OPGESLAGEN.get('pikhouweel', 0)
     dag_tijd = OPGESLAGEN.get('dag_tijd', 0.0)
     _sp = OPGESLAGEN.get('speler')
@@ -2271,6 +2293,11 @@ def update():
     # --- Redstone opnieuw uitrekenen als er iets veranderd is (bv nieuw stukje) ---
     if redstone_moet_update:
         werk_redstone_bij()
+
+    # --- Dubbel-spatie-timer laten aftellen ---
+    global spatie_timer
+    if spatie_timer > 0:
+        spatie_timer = max(0.0, spatie_timer - time.dt)
 
     # --- Vliegen (creatief): met spatie omhoog en shift omlaag ---
     if vliegt:
@@ -2417,6 +2444,19 @@ def input(toets):
     if toets == 'v' and CREATIEF:
         zet_vliegen(not vliegt)
         return
+
+    # DUBBEL op spatie tikken = vliegen aan/uit (net als Minecraft, creatief).
+    if toets == 'space':
+        global spatie_timer
+        if CREATIEF and spatie_timer > 0:
+            zet_vliegen(not vliegt)
+            spatie_timer = 0.0
+        else:
+            spatie_timer = 0.3        # 0,3 sec om nog een keer te tikken
+
+    # Pijltjes links/rechts: het vastgehouden blok in de hotbar verschuiven
+    if toets == 'left arrow':  verplaats_in_hotbar(-1)
+    if toets == 'right arrow': verplaats_in_hotbar(1)
 
     # Breken / plaatsen / deur
     if toets == 'left mouse down':  linker_klik()
