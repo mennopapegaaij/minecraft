@@ -1243,6 +1243,7 @@ def sla_op(stil=False):
 # --- Geluiden ---
 geluid_plaatsen = Audio('plop',  autoplay=False)   # plop bij plaatsen
 geluid_afbreken = Audio('boink', autoplay=False)   # boink bij afbreken
+geluid_wissel   = Audio('plop',  autoplay=False, volume=0.4)  # zacht tikje bij wisselen van blok
 
 
 class Levend(Entity):
@@ -1638,13 +1639,13 @@ def is_item(naam):
 
 
 def beschikbaar():
-    """Alle dingen die je in je rugzak hebt om te plaatsen, in JOUW hotbar-volgorde
-    (die je zelf kunt veranderen). Nieuwe blokken komen achteraan."""
+    """Alle dingen die je in je rugzak hebt om te plaatsen, in JOUW hotbar-volgorde.
+    Een blok dat je NIEUW oppakt komt vanzelf achteraan (op het eerste vrije plekje)."""
     # Alle plaatsbare dingen (gewone/natuur-blokken + maakbare deuren/slabs/...).
     basis = list(BLOK_KEUZES) + [n for n in RECEPTEN if RECEPTEN[n]['plaatsbaar']]
-    # Zet nieuwe soorten achteraan in je eigen volgorde (zonder dubbelen).
+    # Zet blokken die je NU hebt maar nog niet in je volgorde staan er achteraan bij.
     for n in basis:
-        if n not in hotbar_volgorde:
+        if rugzak.get(n, 0) > 0 and n not in hotbar_volgorde:
             hotbar_volgorde.append(n)
     return [n for n in hotbar_volgorde if rugzak.get(n, 0) > 0]
 
@@ -1711,7 +1712,8 @@ def werk_hotbar_bij():
     """Vult de balk onderin met je blokken en zet het kadertje bij het gekozen blok."""
     global hotbar_start
     spullen = beschikbaar()
-    # Zorg dat het vastgehouden blok in de balk zichtbaar is (venster van 9).
+
+    # Zorg dat het vastgehouden blok in de balk zichtbaar blijft (venster van 9).
     if vastgehouden in spullen:
         idx = spullen.index(vastgehouden)
         if idx < hotbar_start:
@@ -1747,8 +1749,10 @@ def werk_hotbar_bij():
 
 
 def kies_vast(naam):
-    """Houd dit blok/ding vast om te plaatsen."""
+    """Houd dit blok/ding vast om te plaatsen (met een zacht tikje bij wisselen)."""
     global vastgehouden
+    if naam is not None and naam != vastgehouden:
+        geluid_wissel.play()
     vastgehouden = naam
     werk_hud_bij()
 
