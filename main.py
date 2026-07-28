@@ -1674,6 +1674,44 @@ dag_tijd   = 0.0
 DAG_LENGTE = 600.0        # een hele dag+nacht duurt 10 minuten: 5 min dag + 5 min nacht
 het_is_nacht = False      # is het nu nacht? (dan komen de monsters!)
 
+# --- Weer: af en toe regen of sneeuw die rond de speler valt ---
+WEER_DEELTJES = 90
+weer_deeltjes = []
+for _i in range(WEER_DEELTJES):
+    weer_deeltjes.append(Entity(model='cube', scale=0.06, color=color.white,
+                                enabled=False))
+weer       = 'helder'                       # 'helder', 'regen' of 'sneeuw'
+weer_timer = random.uniform(25, 45)         # hoe lang duurt dit weer nog?
+
+
+def _nieuwe_deeltjes_plek(d, hoog=False):
+    """Zet een regen/sneeuw-deeltje op een willekeurige plek rond de speler."""
+    d.position = (speler.x + random.uniform(-13, 13),
+                  speler.y + (random.uniform(4, 11) if hoog else random.uniform(2, 11)),
+                  speler.z + random.uniform(-13, 13))
+
+
+def zet_weer(nieuw):
+    """Verander het weer (helder, regen of sneeuw) en stel de deeltjes in."""
+    global weer
+    weer = nieuw
+    if weer == 'helder':
+        for d in weer_deeltjes:
+            d.enabled = False
+        return
+    for d in weer_deeltjes:
+        d.enabled = True
+        _nieuwe_deeltjes_plek(d)
+        if weer == 'regen':
+            d.scale = (0.04, 0.4, 0.04)          # dunne blauwe streepjes
+            d.color = color.rgb(0.5, 0.6, 0.95)
+        else:                                     # sneeuw
+            d.scale = 0.1                         # witte vlokjes
+            d.color = color.rgb(0.95, 0.97, 1.0)
+    toon_melding("Het begint te regenen! 🌧️" if weer == 'regen'
+                 else "Het begint te sneeuwen! ❄️")
+
+
 window.fps_counter.enabled = True
 
 # --- Uitleg op het scherm ---
@@ -2450,6 +2488,30 @@ def update():
     if spatie_timer > 0:
         spatie_timer = max(0.0, spatie_timer - time.dt)
 
+
+    # --- Weer: af en toe regen of sneeuw, en de deeltjes laten vallen ---
+    global weer, weer_timer
+    weer_timer -= time.dt
+    if weer_timer <= 0:
+        if weer == 'helder':
+            # Koud (hoog) gebied? Dan sneeuw, anders regen.
+            koud = hoogte_op(speler.x, speler.z) >= 16
+            zet_weer('sneeuw' if koud else 'regen')
+            weer_timer = random.uniform(15, 30)
+        else:
+            zet_weer('helder')
+            toon_melding("Het weer klaart op. ☀️")
+            weer_timer = random.uniform(30, 60)
+    if weer != 'helder':
+        val = (16 if weer == 'regen' else 3.5) * time.dt
+        for d in weer_deeltjes:
+            d.y -= val
+            if weer == 'sneeuw':
+                d.x += math.sin(d.y * 3) * 0.5 * time.dt   # sneeuw dwarrelt
+            # te laag of te ver weg? terug naar bovenaan rond de speler
+            if (d.y < speler.y - 9 or abs(d.x - speler.x) > 15
+                    or abs(d.z - speler.z) > 15):
+                _nieuwe_deeltjes_plek(d, hoog=True)
 
     # --- Honger: loopt langzaam leeg. Is hij op, dan doet het pijn (eet appels!) ---
     global honger, honger_timer, honger_pijn_timer
