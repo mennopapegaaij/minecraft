@@ -1583,11 +1583,10 @@ Text(
     background=True,
 )
 
-# In de creatieve modus een duidelijke melding bovenaan.
-if CREATIEF:
-    Text(text="CREATIEF   (V = vliegen  •  C = blokken gratis pakken)",
-         position=(0, 0.38), origin=(0, 0), scale=1.1, color=color.cyan,
-         background=True)
+# In de creatieve modus een duidelijke melding bovenaan (aan/uit met de modus).
+creatief_banner = Text(text="CREATIEF   (V = vliegen  •  C = blokken gratis pakken)",
+                       position=(0, 0.38), origin=(0, 0), scale=1.1, color=color.cyan,
+                       background=True, enabled=CREATIEF)
 
 # --- Rugzak-overzicht LINKSONDER: wat heb je, en wat houd je vast? ---
 # Een pijltje '>' staat bij het blok/ding dat je nu vasthoudt om te plaatsen.
@@ -1656,10 +1655,74 @@ def werk_hud_bij():
     for n in spullen:
         naam = ITEM_NAMEN.get(n, n)
         pijl = ">" if n == vastgehouden else "  "
-        regels.append(f"{pijl} {naam}: {rugzak[n]}")
+        aantal = "oneindig" if CREATIEF else rugzak[n]
+        regels.append(f"{pijl} {naam}: {aantal}")
     if len(regels) == 1:
         regels.append("  (leeg - ga blokken slopen!)")
     rugzak_hud.text = "\n".join(regels)
+    werk_hotbar_bij()          # ook de balk onderin bijwerken
+
+
+# --- HOTBAR: een rij vakjes onderin, zoals in Minecraft ---
+HOTBAR_SLOTS  = 9
+_HB_Y         = -0.44          # hoogte van de balk (onderin)
+_HB_STAP      = 0.095         # ruimte tussen de vakjes
+hotbar_start  = 0             # welk item staat links in de balk (voor scrollen)
+hotbar_bg     = []            # de donkere vakjes
+hotbar_icon   = []            # het plaatje van het blok
+hotbar_getal  = []            # hoeveel je ervan hebt
+for _i in range(HOTBAR_SLOTS):
+    _x = (_i - (HOTBAR_SLOTS - 1) / 2) * _HB_STAP
+    hotbar_bg.append(Entity(parent=camera.ui, model='quad', z=1,
+                            color=color.rgba(0, 0, 0, 0.55), scale=0.085, position=(_x, _HB_Y)))
+    hotbar_icon.append(Entity(parent=camera.ui, model='quad', z=0,
+                              color=color.white, scale=0.072, position=(_x, _HB_Y)))
+    hotbar_getal.append(Text(parent=camera.ui, text="", scale=0.7,
+                             position=(_x + 0.035, _HB_Y - 0.028), origin=(0.5, 0)))
+    Text(parent=camera.ui, text=str((_i + 1) % 10), scale=0.6, color=color.yellow,
+         position=(_x - 0.038, _HB_Y + 0.032))          # het cijfer van de toets
+# Wit kadertje rond het gekozen vakje.
+hotbar_kader = Entity(parent=camera.ui, model='quad', z=1.5,
+                      color=color.white, scale=0.098, position=(0, _HB_Y), enabled=False)
+
+
+def werk_hotbar_bij():
+    """Vult de balk onderin met je blokken en zet het kadertje bij het gekozen blok."""
+    global hotbar_start
+    spullen = beschikbaar()
+    # Zorg dat het vastgehouden blok in de balk zichtbaar is (venster van 9).
+    if vastgehouden in spullen:
+        idx = spullen.index(vastgehouden)
+        if idx < hotbar_start:
+            hotbar_start = idx
+        elif idx >= hotbar_start + HOTBAR_SLOTS:
+            hotbar_start = idx - HOTBAR_SLOTS + 1
+    hotbar_start = max(0, min(hotbar_start, max(0, len(spullen) - HOTBAR_SLOTS)))
+    zicht = spullen[hotbar_start:hotbar_start + HOTBAR_SLOTS]
+
+    for i in range(HOTBAR_SLOTS):
+        if i < len(zicht):
+            naam = zicht[i]
+            tex = BLOK_TEXTUUR.get(naam)
+            if tex:                              # blok met een echt plaatje
+                hotbar_icon[i].texture = blok_texture(tex)
+                hotbar_icon[i].color   = color.white
+            else:                                # deur/hek/... : een kleurtje
+                hotbar_icon[i].texture = None
+                hotbar_icon[i].color   = KLEUREN.get(naam, color.gray)
+            hotbar_icon[i].enabled = True
+            hotbar_getal[i].text = "" if CREATIEF else str(rugzak.get(naam, 0))
+        else:
+            hotbar_icon[i].enabled = False
+            hotbar_getal[i].text = ""
+
+    # Het witte kadertje op de plek van het gekozen blok.
+    if vastgehouden in zicht:
+        j = zicht.index(vastgehouden)
+        hotbar_kader.enabled = True
+        hotbar_kader.x = (j - (HOTBAR_SLOTS - 1) / 2) * _HB_STAP
+    else:
+        hotbar_kader.enabled = False
 
 
 def kies_vast(naam):
@@ -1995,7 +2058,7 @@ for i in range(WERELD_KNOPPEN):
     _kol = i // 5
     _rij = i % 5
     _knop = Button(parent=werelden_menu, text="-", scale=(0.32, 0.075),
-                   position=(-0.30 + _kol * 0.36, 0.16 - _rij * 0.088),
+                   position=(-0.30 + _kol * 0.36, 0.10 - _rij * 0.086),
                    color=color.azure)
     _knop.text_entity.scale *= 0.7
     wereld_slots.append(_knop)
@@ -2011,6 +2074,10 @@ overleven_knop.text_entity.scale *= 0.7
 creatief_knop = Button(parent=werelden_menu, text="Nieuw: Creatief",
                        scale=(0.36, 0.07), position=(0.2, -0.41), color=color.cyan)
 creatief_knop.text_entity.scale *= 0.7
+# Knop om DEZE wereld tussen creatief en overleven te wisselen.
+modus_knop = Button(parent=werelden_menu, text="Wissel modus",
+                    scale=(0.55, 0.055), position=(0, 0.21), color=color.orange)
+modus_knop.text_entity.scale *= 0.7
 werelden_sluit = Button(parent=werelden_menu, text="X", scale=(0.05, 0.05),
                         position=(0.71, 0.45), color=color.red)
 
@@ -2034,6 +2101,26 @@ def ga_naar_wereld(naam):
         verberg_werelden_menu()
         return
     _herstart_naar(naam)
+
+
+def _werk_modus_knop():
+    """Zet de juiste tekst op de wissel-knop (afhankelijk van de huidige modus)."""
+    modus_knop.text = ("Zet deze wereld op OVERLEVEN" if CREATIEF
+                       else "Zet deze wereld op CREATIEF")
+
+
+def wissel_modus():
+    """Wisselt DEZE wereld tussen creatief en overleven (zonder opnieuw op te starten)."""
+    global CREATIEF
+    CREATIEF = not CREATIEF
+    if not CREATIEF and vliegt:
+        zet_vliegen(False)                 # in overleven kun je niet vliegen
+    creatief_banner.enabled = CREATIEF
+    _werk_modus_knop()
+    werk_hud_bij()
+    sla_op(stil=True)                      # de nieuwe modus meteen bewaren
+    toon_melding("Creatieve modus AAN! (V = vliegen, C = blokken pakken)" if CREATIEF
+                 else "Overleven-modus AAN!")
 
 
 def maak_nieuwe_wereld(creatief=False):
@@ -2087,6 +2174,7 @@ def toon_werelden_menu():
     mouse.locked  = False
     mouse.visible = True
     wereld_naamveld.text = ""
+    _werk_modus_knop()
     vul_werelden_lijst()
 
 
@@ -2100,6 +2188,7 @@ def verberg_werelden_menu():
 werelden_sluit.on_click = verberg_werelden_menu
 overleven_knop.on_click = Func(maak_nieuwe_wereld, False)
 creatief_knop.on_click  = Func(maak_nieuwe_wereld, True)
+modus_knop.on_click     = wissel_modus
 
 
 def toggle_deur():
@@ -2338,12 +2427,13 @@ def input(toets):
     if toets == 'scroll up':   blader(1)
     if toets == 'scroll down': blader(-1)
 
-    # De cijfertoetsen 1 t/m 9 en 0 kiezen snel uit wat je in je rugzak hebt
+    # De cijfertoetsen 1 t/m 9 kiezen het vakje in de hotbar (0 = het 10e).
     if len(toets) == 1 and toets in '1234567890':
         nummer = 9 if toets == '0' else int(toets) - 1   # '1'->0, ..., '0'->9
         spullen = beschikbaar()
-        if nummer < len(spullen):
-            kies_vast(spullen[nummer])
+        keuze = hotbar_start + nummer                    # het zichtbare vakje in de balk
+        if keuze < len(spullen):
+            kies_vast(spullen[keuze])
 
     if toets == 'f3':
         debug_tekst.enabled        = not debug_tekst.enabled
