@@ -988,6 +988,14 @@ def plaats_blok():
         toon_melding("Je hebt dit niet (meer)! Sloop eerst wat blokken.")
         return
 
+    # Wijs je naar een DIER terwijl je VOER vasthoudt? Dan voer je het dier
+    # (er komt een baby-dier bij) in plaats van een blok te plaatsen.
+    doel = mouse.hovered_entity
+    if isinstance(doel, Dier) and naam in VOER:
+        if (doel.world_position - speler.world_position).length() < 6:
+            voer_dier(doel)
+        return
+
     # De nieuwe plek komt net BUITEN het oppervlak (aan de kant waar je staat)
     punt = mouse.world_point + mouse.world_normal * 0.5
     pos  = (round(punt.x), round(punt.y), round(punt.z))
@@ -1287,10 +1295,16 @@ class Levend(Entity):
 
 
 class Dier(Levend):
-    """Een vreedzaam dier dat rustig rondloopt. Je kunt het slaan."""
+    """Een vreedzaam dier dat rustig rondloopt. Je kunt het slaan of voeren."""
 
     def __init__(self, positie):
         super().__init__(positie, levens=2, lijst=dieren)
+        self.groeit = False       # groeit dit dier nog van baby naar groot?
+
+    def word_baby(self):
+        """Maak dit een klein baby-dier dat langzaam groter wordt."""
+        self.scale = 0.5
+        self.groeit = True
 
     def update(self):
         self.loop_timer -= time.dt
@@ -1299,7 +1313,14 @@ class Dier(Levend):
             self.loop_timer = random.uniform(1, 3)
         self.rotation_y = self.richting
         self.position  += self.forward * time.dt * self.snelheid
-        self.op_de_grond(1.2)
+        # Hoogte boven de grond: een baby zit lager (want hij is kleiner).
+        self.op_de_grond(1.2 * self.scale_x)
+        # Een baby groeit langzaam naar z'n volle grootte.
+        if self.groeit:
+            nieuw = min(1.0, self.scale_x + time.dt * 0.04)
+            self.scale = nieuw
+            if nieuw >= 1.0:
+                self.groeit = False
 
 
 class Varken(Dier):
@@ -1346,6 +1367,39 @@ class Schaap(Dier):
             for pz in (-0.4, 0.4):
                 self.maak_deel(color=kop, position=(px, -0.6, pz),
                                scale=(0.18, 0.6, 0.18))                         # pootjes
+
+
+class Kip(Dier):
+    """Een klein wit kippetje."""
+
+    def __init__(self, positie):
+        super().__init__(positie)
+        self.snelheid = 1.9
+        wit  = color.rgb(0.97, 0.97, 0.95)
+        geel = color.rgb(0.95, 0.8, 0.2)
+        rood = color.rgb(0.85, 0.2, 0.2)
+        self.maak_deel(color=wit,  scale=(0.45, 0.45, 0.65))                    # lijfje
+        self.maak_deel(color=wit,  position=(0, 0.35, 0.3), scale=(0.32, 0.35, 0.3))  # kop
+        self.maak_deel(color=rood, position=(0, 0.58, 0.3), scale=(0.14, 0.14, 0.1))  # kam
+        self.maak_deel(color=geel, position=(0, 0.35, 0.48), scale=(0.12, 0.1, 0.18)) # snavel
+        for px in (-0.12, 0.12):
+            self.maak_deel(color=geel, position=(px, -0.35, 0), scale=(0.07, 0.4, 0.07))  # pootjes
+
+
+class Konijn(Dier):
+    """Een snel bruin konijntje met lange oren."""
+
+    def __init__(self, positie):
+        super().__init__(positie)
+        self.snelheid = 2.3
+        bruin  = color.rgb(0.72, 0.56, 0.42)
+        licht  = color.rgb(0.85, 0.72, 0.6)
+        self.maak_deel(color=bruin, scale=(0.4, 0.4, 0.6))                       # lijfje
+        self.maak_deel(color=bruin, position=(0, 0.25, 0.3), scale=(0.32, 0.32, 0.3))  # kop
+        for ox in (-0.09, 0.09):
+            self.maak_deel(color=licht, position=(ox, 0.55, 0.28), scale=(0.1, 0.4, 0.1))  # oren
+        for px in (-0.13, 0.13):
+            self.maak_deel(color=bruin, position=(px, -0.28, -0.05), scale=(0.12, 0.3, 0.16))  # pootjes
 
 
 class Monster(Levend):
@@ -1553,14 +1607,42 @@ def zet_vliegen(aan):
     toon_melding("Vliegen AAN (spatie = omhoog, shift = omlaag)" if aan
                  else "Vliegen uit")
 
-# --- Dieren (vreedzaam: varkens, koeien en schapen) ---
+# --- Dieren (vreedzaam: varkens, koeien, schapen, kippen en konijnen) ---
 dieren = []
-DIER_SOORTEN = [Varken, Koe, Schaap]
-for _ in range(10):
-    dx = SPAWN_X + random.randint(-15, 15)
-    dz = SPAWN_Z + random.randint(-15, 15)
+DIER_SOORTEN = [Varken, Koe, Schaap, Kip, Konijn]
+for _ in range(12):
+    dx = SPAWN_X + random.randint(-18, 18)
+    dz = SPAWN_Z + random.randint(-18, 18)
     soort = random.choice(DIER_SOORTEN)        # kies willekeurig een diersoort
     dieren.append(soort((dx, hoogte_op(dx, dz) + 1.2, dz)))
+
+
+# Waarmee kun je dieren voeren? (bladeren, paddenstoelen, groente)
+VOER = {'blad', 'mc_berk_blad', 'mc_den_blad', 'mc_kers_blad', 'mc_jungle_blad',
+        'mc_acacia_blad', 'mc_donkereik_blad', 'mc_mangrove_blad',
+        'paddenstoel', 'pompoen', 'mc_meloen', 'mc_hooibaal'}
+
+
+def toon_hartjes(pos):
+    """Laat een paar zwevende hartjes boven een dier zien (het is blij!)."""
+    for _ in range(4):
+        h = Entity(model='cube', color=color.rgb(1, 0.3, 0.45), scale=0.16,
+                   position=pos + Vec3(random.uniform(-0.3, 0.3), 1,
+                                       random.uniform(-0.3, 0.3)))
+        h.animate_position(h.position + Vec3(0, 0.9, 0), duration=0.8)
+        destroy(h, delay=0.9)
+
+
+def voer_dier(dier):
+    """Voer een dier: er komt een baby-dier bij en het dier is blij (hartjes)."""
+    if not CREATIEF:
+        rugzak[vastgehouden] -= 1
+        werk_hud_bij()
+    baby = type(dier)((dier.x, dier.y, dier.z + 0.6))   # zelfde soort dier
+    baby.word_baby()
+    dieren.append(baby)
+    toon_hartjes(dier.world_position)
+    geluid_plaatsen.play()
 
 # --- Monsters (gevaarlijk: ze komen alleen 's NACHTS en vallen aan) ---
 # We beginnen overdag, dus de lijst is nog leeg. 's Nachts komen ze vanzelf.
