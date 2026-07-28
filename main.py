@@ -971,6 +971,11 @@ def voltooi_breken(pos):
         gekregen = REDSTONE_BASIS.get(t, t)
         rugzak[gekregen] = rugzak.get(gekregen, 0) + 1
         werk_hud_bij()
+    # Soms vind je een appel als je bladeren sloopt!
+    if t in BLAD_TYPES and not CREATIEF and random.random() < 0.18:
+        rugzak['appel'] = rugzak.get('appel', 0) + 1
+        werk_appel_hud()
+        toon_melding("Je vond een appel! Druk op E om te eten.")
     geluid_afbreken.play()
     herbouw_rond(pos)
     if was_redstone:
@@ -1234,6 +1239,7 @@ def sla_op(stil=False):
         'speciaal': spec,
         'rugzak': rugzak,
         'pikhouweel': pikhouweel_niveau,
+        'honger': honger,
         'hotbar': hotbar_volgorde,
         'speler': [speler.x, speler.y, speler.z, speler.rotation_y, camera.rotation_x],
         'dag_tijd': dag_tijd,
@@ -1622,6 +1628,14 @@ VOER = {'blad', 'mc_berk_blad', 'mc_den_blad', 'mc_kers_blad', 'mc_jungle_blad',
         'mc_acacia_blad', 'mc_donkereik_blad', 'mc_mangrove_blad',
         'paddenstoel', 'pompoen', 'mc_meloen', 'mc_hooibaal'}
 
+# Alle soorten bladeren (daar vind je soms een appel in).
+BLAD_TYPES = {'blad', 'mc_berk_blad', 'mc_den_blad', 'mc_kers_blad', 'mc_jungle_blad',
+              'mc_acacia_blad', 'mc_donkereik_blad', 'mc_mangrove_blad'}
+
+# De appel: die kun je opeten om je honger te stillen (niet plaatsen).
+ITEM_NAMEN['appel'] = 'Appel'
+KLEUREN['appel']    = color.rgb(0.85, 0.2, 0.2)
+
 
 def toon_hartjes(pos):
     """Laat een paar zwevende hartjes boven een dier zien (het is blij!)."""
@@ -1881,11 +1895,59 @@ def doe_schade(n):
 
 def respawn():
     """Zet je weer veilig op de startplek met volle hartjes."""
-    global speler_hp
+    global speler_hp, honger
     toon_melding("Au! Je bent verslagen! Je begint opnieuw bovenaan.")
     speler.position = (SPAWN_X, hoogte_op(SPAWN_X, SPAWN_Z) + 2, SPAWN_Z)
     speler_hp = MAX_HP
+    honger    = MAX_HONGER
     werk_hartjes_bij()
+    werk_honger_bij()
+
+
+# --- Honger: hoeveel je nog kunt eten. Loopt langzaam leeg; eet appels! ---
+MAX_HONGER   = 10
+honger       = MAX_HONGER
+honger_timer = 0.0
+honger_pijn_timer = 0.0
+honger_iconen = []
+for i in range(MAX_HONGER):
+    # Een oranje vierkantje per honger-punt, op een rijtje onder de hartjes.
+    ico = Entity(parent=camera.ui, model='quad', color=color.rgb(0.9, 0.55, 0.15),
+                 scale=0.03, position=(-0.2 + i * 0.045, 0.385))
+    honger_iconen.append(ico)
+
+appel_hud = Text(text="", position=(0.55, 0.40), scale=1.0, background=True)
+
+
+def werk_honger_bij():
+    """Kleurt de honger-blokjes: oranje als je nog vol zit, grijs als je honger krijgt."""
+    for i, ico in enumerate(honger_iconen):
+        ico.color = color.rgb(0.9, 0.55, 0.15) if i < honger else color.rgb(0.3, 0.25, 0.2)
+
+
+def werk_appel_hud():
+    """Laat rechtsboven zien hoeveel appels je hebt."""
+    n = rugzak.get('appel', 0)
+    appel_hud.text = f"Appels: {n}   (E = eten)" if n > 0 else ""
+
+
+def eet_appel():
+    """Eet een appel om je honger te stillen."""
+    global honger
+    if CREATIEF:
+        return
+    if rugzak.get('appel', 0) <= 0:
+        toon_melding("Je hebt geen appels. Sloop bladeren om er te vinden!")
+        return
+    if honger >= MAX_HONGER:
+        toon_melding("Je zit al helemaal vol!")
+        return
+    rugzak['appel'] -= 1
+    honger = min(MAX_HONGER, honger + 4)
+    werk_honger_bij()
+    werk_appel_hud()
+    geluid_plaatsen.play()
+    toon_melding("Mmm, lekker! Een appel gegeten.")
 
 
 # --- Maak-tafel (open met 'c', sluit met Escape of de Sluiten-knop) ---
@@ -2329,6 +2391,7 @@ if OPGESLAGEN:
     rugzak.clear()
     rugzak.update(OPGESLAGEN.get('rugzak', {}))
     hotbar_volgorde[:] = OPGESLAGEN.get('hotbar', [])   # jouw eigen hotbar-volgorde
+    honger = OPGESLAGEN.get('honger', MAX_HONGER)
     pikhouweel_niveau = OPGESLAGEN.get('pikhouweel', 0)
     dag_tijd = OPGESLAGEN.get('dag_tijd', 0.0)
     _sp = OPGESLAGEN.get('speler')
@@ -2353,6 +2416,8 @@ if OPGESLAGEN:
             bouw_chunk_model(_pc[0] + _dcx, _pc[1] + _dcz)
     werk_hud_bij()
     werk_pikhouweel_hud()
+    werk_honger_bij()
+    werk_appel_hud()
     werk_redstone_bij()                      # redstone opnieuw uitrekenen na laden
 
 
@@ -2384,6 +2449,22 @@ def update():
     global spatie_timer
     if spatie_timer > 0:
         spatie_timer = max(0.0, spatie_timer - time.dt)
+
+
+    # --- Honger: loopt langzaam leeg. Is hij op, dan doet het pijn (eet appels!) ---
+    global honger, honger_timer, honger_pijn_timer
+    if not CREATIEF:
+        honger_timer += time.dt
+        if honger_timer > 12 and honger > 0:      # elke 12 sec 1 honger eraf
+            honger_timer = 0.0
+            honger -= 1
+            werk_honger_bij()
+        if honger <= 0:
+            honger_pijn_timer += time.dt
+            if honger_pijn_timer > 4:              # honger doet af en toe pijn
+                honger_pijn_timer = 0.0
+                toon_melding("Je hebt honger! Eet een appel (E).")
+                doe_schade(1)
 
     # --- Vliegen (creatief): met spatie omhoog en shift omlaag ---
     if vliegt:
@@ -2529,6 +2610,11 @@ def input(toets):
     # 'v' zet vliegen aan/uit (alleen in de creatieve modus)
     if toets == 'v' and CREATIEF:
         zet_vliegen(not vliegt)
+        return
+
+    # 'e' eet een appel (om je honger te stillen)
+    if toets == 'e':
+        eet_appel()
         return
 
     # DUBBEL op spatie tikken = vliegen aan/uit (net als Minecraft, creatief).
