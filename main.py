@@ -1682,6 +1682,12 @@ for _i in range(WEER_DEELTJES):
                                 enabled=False))
 weer       = 'helder'                       # 'helder', 'regen' of 'sneeuw'
 weer_timer = random.uniform(25, 45)         # hoe lang duurt dit weer nog?
+sneeuw_leg_timer = 0.0                       # om af en toe sneeuw op de grond te leggen
+
+# Sneeuw op de grond = losse dunne witte laagjes (aparte entities, geen chunk-herbouw).
+sneeuw_lagen    = {}                          # (x, z) -> het witte laagje-entity
+sneeuw_volgorde = collections.deque()        # om de oudste weg te halen als het te veel wordt
+MAX_SNEEUW_LAGEN = 260
 
 
 def _nieuwe_deeltjes_plek(d, hoog=False):
@@ -1710,6 +1716,35 @@ def zet_weer(nieuw):
             d.color = color.rgb(0.95, 0.97, 1.0)
     toon_melding("Het begint te regenen! 🌧️" if weer == 'regen'
                  else "Het begint te sneeuwen! ❄️")
+
+
+def leg_sneeuw_neer():
+    """Legt tijdens sneeuw dunne witte laagjes op de grond rond de speler.
+    Dit zijn losse entities (geen chunk-herbouw), dus het blijft snel."""
+    for _ in range(4):
+        x = round(speler.x) + random.randint(-13, 13)
+        z = round(speler.z) + random.randint(-13, 13)
+        if (x, z) in sneeuw_lagen:
+            continue                      # hier ligt al sneeuw
+        g = hoogte_op(x, z)
+        grond = (x, g, z)
+        boven = (x, g + 1, z)
+        if grond not in wereld or boven in wereld:
+            continue                      # geen open grond om op te liggen
+        t = wereld[grond]
+        if t in ('water', 'sneeuw', 'lava') or t in BLAD_TYPES:
+            continue                      # niet op water, sneeuw, lava of bladeren
+        # Een dun wit laagje bovenop het grondblok.
+        laag = Entity(model='cube', color=color.rgb(0.95, 0.97, 1.0),
+                      position=(x, g + 0.55, z), scale=(1, 0.12, 1))
+        sneeuw_lagen[(x, z)] = laag
+        sneeuw_volgorde.append((x, z))
+        # Te veel sneeuw? Haal de oudste laagjes weg (blijft licht voor de computer).
+        while len(sneeuw_volgorde) > MAX_SNEEUW_LAGEN:
+            oud = sneeuw_volgorde.popleft()
+            weg = sneeuw_lagen.pop(oud, None)
+            if weg:
+                destroy(weg)
 
 
 window.fps_counter.enabled = True
@@ -2490,7 +2525,7 @@ def update():
 
 
     # --- Weer: af en toe regen of sneeuw, en de deeltjes laten vallen ---
-    global weer, weer_timer
+    global weer, weer_timer, sneeuw_leg_timer
     weer_timer -= time.dt
     if weer_timer <= 0:
         if weer == 'helder':
@@ -2512,6 +2547,12 @@ def update():
             if (d.y < speler.y - 9 or abs(d.x - speler.x) > 15
                     or abs(d.z - speler.z) > 15):
                 _nieuwe_deeltjes_plek(d, hoog=True)
+    # Tijdens sneeuw blijft er sneeuw op de grond liggen (losse laagjes, snel).
+    if weer == 'sneeuw':
+        sneeuw_leg_timer += time.dt
+        if sneeuw_leg_timer > 0.4:
+            sneeuw_leg_timer = 0.0
+            leg_sneeuw_neer()
 
     # --- Honger: loopt langzaam leeg. Is hij op, dan doet het pijn (eet appels!) ---
     global honger, honger_timer, honger_pijn_timer
