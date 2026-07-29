@@ -976,6 +976,17 @@ def voltooi_breken(pos):
         rugzak['appel'] = rugzak.get('appel', 0) + 1
         werk_appel_hud()
         toon_melding("Je vond een appel! Druk op E om te eten.")
+    # Sneeuw slopen geeft sneeuwballen (om te gooien).
+    if t == 'sneeuw':
+        rugzak['sneeuwbal'] = rugzak.get('sneeuwbal', 0) + 2
+        werk_appel_hud()
+    # Lag er een sneeuwlaagje op deze plek? Dan schep je er een sneeuwbal uit.
+    if (pos[0], pos[2]) in sneeuw_lagen:
+        _laag = sneeuw_lagen.pop((pos[0], pos[2]), None)
+        if _laag:
+            destroy(_laag)
+        rugzak['sneeuwbal'] = rugzak.get('sneeuwbal', 0) + 1
+        werk_appel_hud()
     geluid_afbreken.play()
     herbouw_rond(pos)
     if was_redstone:
@@ -1636,6 +1647,10 @@ BLAD_TYPES = {'blad', 'mc_berk_blad', 'mc_den_blad', 'mc_kers_blad', 'mc_jungle_
 ITEM_NAMEN['appel'] = 'Appel'
 KLEUREN['appel']    = color.rgb(0.85, 0.2, 0.2)
 
+# De sneeuwbal: die kun je gooien (krijg je door sneeuw te slopen).
+ITEM_NAMEN['sneeuwbal'] = 'Sneeuwbal'
+KLEUREN['sneeuwbal']    = color.rgb(0.95, 0.97, 1.0)
+
 
 def toon_hartjes(pos):
     """Laat een paar zwevende hartjes boven een dier zien (het is blij!)."""
@@ -1688,6 +1703,8 @@ sneeuw_leg_timer = 0.0                       # om af en toe sneeuw op de grond t
 sneeuw_lagen    = {}                          # (x, z) -> het witte laagje-entity
 sneeuw_volgorde = collections.deque()        # om de oudste weg te halen als het te veel wordt
 MAX_SNEEUW_LAGEN = 260
+smelt_timer     = 0.0                         # om sneeuw langzaam te laten smelten
+sneeuwballen_vliegend = []                    # sneeuwballen die nu door de lucht vliegen
 
 
 def _nieuwe_deeltjes_plek(d, hoog=False):
@@ -1999,9 +2016,40 @@ def werk_honger_bij():
 
 
 def werk_appel_hud():
-    """Laat rechtsboven zien hoeveel appels je hebt."""
-    n = rugzak.get('appel', 0)
-    appel_hud.text = f"Appels: {n}   (E = eten)" if n > 0 else ""
+    """Laat rechtsboven zien hoeveel appels en sneeuwballen je hebt."""
+    delen = []
+    a = rugzak.get('appel', 0)
+    s = rugzak.get('sneeuwbal', 0)
+    if a > 0:
+        delen.append(f"Appels: {a} (E = eten)")
+    if s > 0:
+        delen.append(f"Sneeuwballen: {s} (B = gooien)")
+    appel_hud.text = "     ".join(delen)
+
+
+def _sneeuwbal_poef(pos):
+    """Een klein wit poef-effect als een sneeuwbal ergens tegenaan komt."""
+    for _ in range(5):
+        p = Entity(model='cube', color=color.rgb(0.95, 0.97, 1.0), scale=0.12,
+                   position=pos + Vec3(random.uniform(-0.2, 0.2), random.uniform(-0.2, 0.2),
+                                       random.uniform(-0.2, 0.2)))
+        p.animate_scale(0, duration=0.4)
+        destroy(p, delay=0.45)
+
+
+def gooi_sneeuwbal():
+    """Gooi een sneeuwbal in de richting waar je kijkt."""
+    if rugzak.get('sneeuwbal', 0) <= 0:
+        toon_melding("Je hebt geen sneeuwballen. Sloop sneeuw om ze te maken!")
+        return
+    rugzak['sneeuwbal'] -= 1
+    werk_appel_hud()
+    bal = Entity(model='sphere', color=color.rgb(0.97, 0.98, 1.0), scale=0.3,
+                 position=camera.world_position + camera.forward * 0.8)
+    bal.snelheid = camera.forward * 24 + Vec3(0, 2.5, 0)   # vooruit + beetje omhoog
+    bal.leeftijd = 0.0
+    sneeuwballen_vliegend.append(bal)
+    geluid_plaatsen.play()
 
 
 def eet_appel():
@@ -2554,6 +2602,39 @@ def update():
             sneeuw_leg_timer = 0.0
             leg_sneeuw_neer()
 
+    # Is het weer helder? Dan smelt de sneeuw op de grond langzaam weg.
+    global smelt_timer
+    if weer == 'helder' and sneeuw_lagen:
+        smelt_timer += time.dt
+        if smelt_timer > 0.25:
+            smelt_timer = 0.0
+            for _ in range(4):
+                if not sneeuw_volgorde:
+                    break
+                oud = sneeuw_volgorde.popleft()
+                _e = sneeuw_lagen.pop(oud, None)
+                if _e:
+                    destroy(_e)
+
+    # --- Vliegende sneeuwballen laten vliegen (met zwaartekracht) ---
+    for bal in list(sneeuwballen_vliegend):
+        bal.snelheid += Vec3(0, -12, 0) * time.dt     # zwaartekracht
+        bal.position += bal.snelheid * time.dt
+        bal.leeftijd += time.dt
+        geraakt = False
+        # Raakt de sneeuwbal een dier of monster? Geef een tikje.
+        for wezen in list(monsters) + list(dieren):
+            if (wezen.world_position - bal.world_position).length() < 1.1:
+                if isinstance(wezen, Monster):
+                    wezen.raak(1)
+                geraakt = True
+                break
+        # Op de grond gevallen of te lang onderweg? Dan poef.
+        if geraakt or bal.leeftijd > 3 or bal.y < hoogte_op(bal.x, bal.z) + 0.2:
+            _sneeuwbal_poef(bal.world_position)
+            sneeuwballen_vliegend.remove(bal)
+            destroy(bal)
+
     # --- Honger: loopt langzaam leeg. Is hij op, dan doet het pijn (eet appels!) ---
     global honger, honger_timer, honger_pijn_timer
     if not CREATIEF:
@@ -2718,6 +2799,11 @@ def input(toets):
     # 'e' eet een appel (om je honger te stillen)
     if toets == 'e':
         eet_appel()
+        return
+
+    # 'b' gooit een sneeuwbal
+    if toets == 'b':
+        gooi_sneeuwbal()
         return
 
     # DUBBEL op spatie tikken = vliegen aan/uit (net als Minecraft, creatief).
