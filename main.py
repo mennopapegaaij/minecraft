@@ -1608,7 +1608,7 @@ for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
             bouw_wachtrij.append(chunk)
 
 # --- Speler ---
-speler = FirstPersonController(height=2)
+speler = FirstPersonController(height=1.5)   # ooghoogte: anderhalf blok
 speler.position = (SPAWN_X, spawn_grond + 2, SPAWN_Z)
 
 # Vliegen (alleen in creatief). We onthouden de gewone zwaartekracht.
