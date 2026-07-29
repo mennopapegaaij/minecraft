@@ -1609,6 +1609,7 @@ for dcx in range(-RENDER_AFSTAND, RENDER_AFSTAND + 1):
 
 # --- Speler ---
 speler = FirstPersonController(height=1.5)   # ooghoogte: anderhalf blok
+speler.jump_height = 1.1                      # net genoeg om op 1 blok hoog te springen
 speler.position = (SPAWN_X, spawn_grond + 2, SPAWN_Z)
 
 # Vliegen (alleen in creatief). We onthouden de gewone zwaartekracht.
