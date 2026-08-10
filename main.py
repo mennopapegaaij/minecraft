@@ -460,18 +460,26 @@ def voeg_boom_toe(blokken, x, grond, z, rng, stam='hout', blad='blad', soort='ro
 # dezelfde plek, en hoeven we er niets extra's voor op te slaan.
 
 DORP_PER_CHUNK = {}     # (cx, cz) -> (blokken om te ZETTEN, plekken om LEEG te maken)
-DORP_DEUREN    = []     # de deuren van de huisjes: (positie, richting)
-DORP_HUIZEN    = []     # het midden van elk huisje (daar wonen de villagers)
-DORP_MIDDEN    = None   # het midden van het dorp (x, y, z)
-DORP_VLAK      = None   # (x_van, x_tot, z_van, z_tot, vloerhoogte) van het plein
+DORP_DEUREN    = []     # alle voordeuren van alle dorpjes: (positie, richting)
+DORPEN         = []     # alle dorpjes van deze wereld (zie _bedenk_dorp)
 
 HUIS_HALF = 3           # een huisje is 7x7 blokken (3 aan elke kant van het midden)
 DORP_HALF = 13          # het hele dorpsplein is 27x27 blokken
 
+# Elk dorpje krijgt een eigen naam, zodat je ze uit elkaar kunt houden.
+DORP_NAMEN = ['Eikendorp', 'Zonneveld', 'Steenbrug', 'Molenwijk',
+              'Bosdal', 'Verweghuizen', 'Zandhoven', 'Beekdorp']
 
-def _dorp_plek():
-    """Zoekt een mooie VLAKKE plek voor het dorp, niet te ver van de startplek
-    en niet in het water. We proberen een paar plekjes en kiezen de vlakste."""
+# Hoe ver staan de VERRE dorpjes van je startplek? (van ... tot ... blokken)
+# Het eerste dorpje staat altijd lekker dichtbij, deze moet je gaan ZOEKEN.
+DORP_AFSTANDEN = [(70, 110), (115, 160), (165, 210)]
+
+
+def _eerste_dorp_plek():
+    """Zoekt de plek voor het dorpje vlak bij je startplek.
+    Dit is precies dezelfde manier van zoeken als toen er nog maar één dorp
+    was. Zo blijft het dorp in een wereld die je AL had gewoon op zijn eigen
+    plek staan, ook nu er dorpjes bij gekomen zijn."""
     rng = random.Random(WERELD_ZAAD + 4242)
     beste, beste_verschil = None, None
     for _ in range(40):
@@ -479,7 +487,6 @@ def _dorp_plek():
         vz = rng.randint(-45, 45)
         if abs(vx) < 18 and abs(vz) < 18:
             continue                        # niet bovenop je startplek bouwen
-        # Hoe vlak is het hier? We meten de hoogte op 9 plekjes.
         hoogtes = [hoogte_op(vx + dx, vz + dz)
                    for dx in (-12, 0, 12) for dz in (-12, 0, 12)]
         if min(hoogtes) <= WATER_NIVEAU + 1:
@@ -490,7 +497,32 @@ def _dorp_plek():
     return beste or (26, 26)
 
 
-def _bouw_huisje(blokken, leeg, hx, hz, vloer, muur, deur_kant):
+def _dorp_plek(rng, van, tot, al_gekozen):
+    """Zoekt een mooie VLAKKE plek voor een dorpje: tussen 'van' en 'tot' blokken
+    van de startplek, niet in het water en niet bovenop een ander dorpje.
+    We proberen een heleboel plekjes en kiezen de allervlakste."""
+    beste, beste_verschil = None, None
+    for _ in range(80):
+        hoek = rng.uniform(0, 2 * math.pi)          # een willekeurige richting
+        afst = rng.uniform(van, tot)                # en een willekeurige afstand
+        vx = int(math.cos(hoek) * afst)
+        vz = int(math.sin(hoek) * afst)
+        # Niet bovenop een dorpje dat er al staat
+        if any(abs(vx - ox) < 2 * DORP_HALF + 12 and abs(vz - oz) < 2 * DORP_HALF + 12
+               for ox, oz in al_gekozen):
+            continue
+        # Hoe vlak is het hier? We meten de hoogte op 9 plekjes.
+        hoogtes = [hoogte_op(vx + dx, vz + dz)
+                   for dx in (-12, 0, 12) for dz in (-12, 0, 12)]
+        if min(hoogtes) <= WATER_NIVEAU + 1:
+            continue                        # te laag: daar staat water
+        verschil = max(hoogtes) - min(hoogtes)
+        if beste is None or verschil < beste_verschil:
+            beste, beste_verschil = (vx, vz), verschil
+    return beste
+
+
+def _bouw_huisje(blokken, leeg, dorp, hx, hz, vloer, muur, deur_kant):
     """Bouwt één huisje van 7x7: vloer, muren, dak, ramen en een deur-opening."""
     for x in range(hx - HUIS_HALF, hx + HUIS_HALF + 1):
         for z in range(hz - HUIS_HALF, hz + HUIS_HALF + 1):
@@ -517,16 +549,21 @@ def _bouw_huisje(blokken, leeg, hx, hz, vloer, muur, deur_kant):
     # loopt? Dan richting 0, anders een kwartslag gedraaid (90).
     richting = 0 if deur_kant[1] != 0 else 90
     DORP_DEUREN.append(((dx, vloer + 1, dz), richting))
-    DORP_HUIZEN.append((hx, vloer + 1, hz))
+    dorp['huizen'].append((hx, vloer + 1, hz))
 
 
-def _bedenk_dorp():
-    """Bedenkt het hele dorp: een vlak grasveld, vier huisjes, paadjes en een put."""
-    global DORP_MIDDEN, DORP_VLAK
-    vx, vz = _dorp_plek()
+def _bedenk_dorp(naam, vx, vz):
+    """Bedenkt één dorpje: een vlak grasveld, vier huisjes, paadjes en een put.
+    Geeft een 'dorp' terug: een kaartje met de naam, het midden, het vlakke
+    plein en waar de huisjes staan."""
     vloer = hoogte_op(vx, vz)
-    DORP_MIDDEN = (vx, vloer + 1, vz)
-    DORP_VLAK   = (vx - DORP_HALF, vx + DORP_HALF, vz - DORP_HALF, vz + DORP_HALF, vloer)
+    dorp = {
+        'naam':   naam,
+        'midden': (vx, vloer + 1, vz),
+        'vlak':   (vx - DORP_HALF, vx + DORP_HALF,
+                   vz - DORP_HALF, vz + DORP_HALF, vloer),
+        'huizen': [],
+    }
     blokken, leeg = {}, set()
 
     # 1) Het land vlak maken: een grasveld op één hoogte, heuvels en bomen weg.
@@ -546,7 +583,7 @@ def _bedenk_dorp():
     HOEKEN = ((-8, -8), (8, -8), (-8, 8), (8, 8))
     for i, (hx, hz) in enumerate(HOEKEN):
         kant = (0, 1) if hz < 0 else (0, -1)     # de deur kijkt naar het plein
-        _bouw_huisje(blokken, leeg, vx + hx, vz + hz, vloer, MUREN[i], kant)
+        _bouw_huisje(blokken, leeg, dorp, vx + hx, vz + hz, vloer, MUREN[i], kant)
 
     # 3) Paadjes van zandsteen: een kruis midden over het plein
     for d in range(-DORP_HALF, DORP_HALF + 1):
@@ -569,6 +606,40 @@ def _bedenk_dorp():
     for pos in leeg:
         c = chunk_van_pos(pos[0], pos[2])
         DORP_PER_CHUNK.setdefault(c, ({}, set()))[1].add(pos)
+    return dorp
+
+
+def _bedenk_dorpen():
+    """Bedenkt ALLE dorpjes van deze wereld. Het eerste staat lekker dichtbij,
+    de andere verder weg zodat je ze kunt gaan zoeken. Ze horen bij het
+    wereld-zaad, dus in dezelfde wereld staan ze altijd op dezelfde plek."""
+    namen = list(DORP_NAMEN)
+    random.Random(WERELD_ZAAD + 777).shuffle(namen)   # elke wereld andere namen
+    # 1) Het dorpje dicht bij je startplek (staat er in oude werelden al).
+    dichtbij = _eerste_dorp_plek()
+    gekozen = [dichtbij]
+    DORPEN.append(_bedenk_dorp(namen[0], *dichtbij))
+    # 2) En daarna de verre dorpjes om te ontdekken.
+    rng = random.Random(WERELD_ZAAD + 4243)
+    for i, (van, tot) in enumerate(DORP_AFSTANDEN, start=1):
+        plek = _dorp_plek(rng, van, tot, gekozen)
+        if plek is None:
+            continue                          # hier was geen vlakke plek: jammer
+        gekozen.append(plek)
+        DORPEN.append(_bedenk_dorp(namen[i % len(namen)], *plek))
+
+
+def dichtstbijzijnde_dorp(x, z):
+    """Welk dorpje is hier het dichtstbij, en hoe ver is het nog lopen?
+    Geeft (dorp, afstand) terug, of (None, 0) als er geen dorpjes zijn."""
+    beste, kortste = None, None
+    for dorp in DORPEN:
+        dx = dorp['midden'][0] - x
+        dz = dorp['midden'][2] - z
+        afst = math.sqrt(dx * dx + dz * dz)
+        if kortste is None or afst < kortste:
+            beste, kortste = dorp, afst
+    return beste, (kortste or 0)
 
 
 def zet_dorp_in_chunk(blokken, cx, cz):
@@ -586,18 +657,18 @@ def zet_dorp_in_chunk(blokken, cx, cz):
 
 
 def grond_onder(x, z):
-    """Hoe hoog ligt de grond hier? Op het dorpsplein is dat de vlakke vloer,
-    overal anders het gewone landschap. Dieren en villagers gebruiken dit om
-    netjes op de grond te blijven staan."""
-    if DORP_VLAK is not None:
-        x0, x1, z0, z1, vloer = DORP_VLAK
+    """Hoe hoog ligt de grond hier? Op een dorpsplein is dat de vlakke vloer,
+    overal anders het gewone landschap. Dieren, villagers en golems gebruiken
+    dit om netjes op de grond te blijven staan."""
+    for dorp in DORPEN:
+        x0, x1, z0, z1, vloer = dorp['vlak']
         if x0 <= x <= x1 and z0 <= z <= z1:
             return vloer
     return hoogte_op(x, z)
 
 
-# Het dorp meteen bedenken, VOORDAT de eerste stukjes wereld gemaakt worden.
-_bedenk_dorp()
+# De dorpjes meteen bedenken, VOORDAT de eerste stukjes wereld gemaakt worden.
+_bedenk_dorpen()
 
 
 def genereer_chunk_data(cx, cz):
@@ -834,6 +905,7 @@ ITEM_NAMEN = {
     'hek': 'Hek', 'deur': 'Deur',
     'hefboom': 'Hefboom (schakelaar)',
     'piston': 'Piston', 'kleverige_piston': 'Kleverige piston',
+    'ijzergolem': 'IJzergolem', 'boot': 'Boot',
     'stenen_pikhouweel': 'Stenen pikhouweel',
     'ijzeren_pikhouweel': 'IJzeren pikhouweel',
     'gouden_pikhouweel': 'Gouden pikhouweel',
@@ -854,6 +926,11 @@ RECEPTEN = {
     'hefboom':          {'kosten': {'steen': 1, 'hout': 1},                'maakt': 1, 'plaatsbaar': True},
     'piston':           {'kosten': {'hout': 3, 'steen': 4, 'ijzer': 1},    'maakt': 1, 'plaatsbaar': True},
     'kleverige_piston': {'kosten': {'hout': 3, 'steen': 4, 'ijzer': 1, 'blad': 1}, 'maakt': 1, 'plaatsbaar': True},
+    # Een ijzergolem bouwen (4 ijzer + een pompoen als hoofd), net als in het
+    # echte Minecraft. Zet hem neer met de G-toets: hij beschermt je!
+    'ijzergolem': {'kosten': {'ijzer': 4, 'pompoen': 1}, 'maakt': 1, 'plaatsbaar': False},
+    # Een bootje om snel over het water te varen. Zet hem neer met de N-toets.
+    'boot':       {'kosten': {'hout': 5},                'maakt': 1, 'plaatsbaar': False},
     # De pikhouweel-ketting: elke pikhouweel kan een mooier erts hakken.
     # 'niveau' = hoe sterk hij is (zie ERTS_NIVEAU hierboven).
     'stenen_pikhouweel':    {'kosten': {'steen': 3,   'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 1},
@@ -1406,6 +1483,10 @@ def sla_op(stil=False):
         'hotbar': hotbar_volgorde,
         'speler': [speler.x, speler.y, speler.z, speler.rotation_y, camera.rotation_x],
         'dag_tijd': dag_tijd,
+        # De bootjes die je gemaakt hebt en de golems die JIJ hebt neergezet.
+        # (De golems van de dorpjes komen vanzelf terug, die slaan we niet op.)
+        'boten':  [[b.x, b.y, b.z] for b in boten],
+        'golems': [[g.x, g.y, g.z] for g in golems if g.eigen],
     }
     try:
         with open(OPSLAG_PAD, 'w') as f:
@@ -1474,9 +1555,20 @@ class Levend(Entity):
 
 
 def alle_wezens():
-    """Alle dieren, villagers en monsters bij elkaar. Handig om straaltjes
-    (raycasts) ze te laten NEGEREN: we willen alleen echte blokken voelen."""
-    return monsters + dieren + villagers
+    """Alle dieren, villagers, golems en monsters bij elkaar. Handig om
+    straaltjes (raycasts) ze te laten NEGEREN: we willen alleen echte blokken
+    voelen."""
+    return monsters + dieren + villagers + golems
+
+
+# Wezens die VER van de speler vandaan zijn hoeven niets te doen: je ziet ze
+# toch niet. Dat scheelt een hoop rekenwerk nu er meerdere dorpjes zijn.
+SLAAP_AFSTAND = 60
+
+
+def slaapt(wezen):
+    """Staat dit wezen zo ver weg dat het even niets hoeft te doen?"""
+    return (wezen.world_position - speler.world_position).length() > SLAAP_AFSTAND
 
 
 class Dier(Levend):
@@ -1661,6 +1753,8 @@ class Villager(Levend):
         return dichtste
 
     def update(self):
+        if slaapt(self):
+            return                  # hij woont in een dorp ver weg: even niks doen
         bang_voor = self.dichtstbijzijnde_monster()
         if bang_voor is not None:
             # Help, een monster! Wegrennen, precies de andere kant op.
@@ -1690,6 +1784,96 @@ class Villager(Levend):
             self.rotation_y = self.richting
             self.loop_vooruit()
         self.op_de_grond(1.15)
+
+
+GOLEM_HOOGTE = 1.35    # zo hoog zit het midden van een golem boven de grond
+
+
+class IJzerGolem(Levend):
+    """Een grote sterke ijzergolem. Hij bewaakt het dorp: ziet hij een monster,
+    dan stampt hij erheen en mept hij het met één klap ver weg. Jou en de
+    villagers doet hij niets — die beschermt hij juist!"""
+
+    def __init__(self, positie, thuis):
+        super().__init__(positie, levens=30, lijst=golems)   # heel veel levens
+        self.thuis        = Vec3(*thuis)     # welk dorp bewaakt hij?
+        self.snelheid     = 1.5
+        self.sla_cooldown = 0
+        self.eigen        = False            # heeft de speler hem zelf gemaakt?
+        ijzer  = color.rgb(0.82, 0.81, 0.78)   # licht ijzergrijs
+        donker = color.rgb(0.62, 0.61, 0.58)   # donkerder grijs
+        rank   = color.rgb(0.35, 0.6, 0.25)    # groene ranken op zijn buik
+        neus   = color.rgb(0.72, 0.6, 0.5)
+        self.maak_deel(color=ijzer,  position=(0, 0.5, 0),    scale=(1.0, 1.4, 0.6))   # lijf
+        self.maak_deel(color=rank,   position=(0, 0.35, 0.32), scale=(0.5, 0.7, 0.06)) # ranken
+        self.maak_deel(color=ijzer,  position=(0, 1.55, 0),   scale=(0.55, 0.6, 0.5))  # kop
+        self.maak_deel(color=neus,   position=(0, 1.45, 0.28), scale=(0.16, 0.5, 0.16))# lange neus
+        for ex in (-0.16, 0.16):                                                       # ogen
+            self.maak_deel(color=color.rgb(0.5, 0.15, 0.15),
+                           position=(ex, 1.72, 0.24), scale=(0.12, 0.1, 0.06))
+        for ax in (-0.72, 0.72):                                                       # dikke armen
+            self.maak_deel(color=donker, position=(ax, 0.35, 0), scale=(0.35, 1.8, 0.35))
+        for px in (-0.28, 0.28):                                                       # stevige benen
+            self.maak_deel(color=donker, position=(px, -0.75, 0), scale=(0.4, 1.1, 0.45))
+        # Hij is groter dan een dier, dus ook een grotere klik-box
+        self.collider = BoxCollider(self, center=Vec3(0, 0.6, 0),
+                                    size=Vec3(1.4, 2.8, 1.2))
+
+    def zoek_monster(self):
+        """Zoekt het dichtstbijzijnde monster binnen 16 blokken."""
+        dichtste, kortste = None, 16
+        for m in monsters:
+            d = (m.world_position - self.world_position).length()
+            if d < kortste:
+                dichtste, kortste = m, d
+        return dichtste
+
+    def mep(self, monster):
+        """BENG! Een klap van een golem doet heel veel pijn en slaat het
+        monster een flink stuk weg."""
+        weg = monster.world_position - self.world_position
+        plat = Vec3(weg.x, 0, weg.z)
+        if plat.length() > 0.01:
+            monster.position += plat.normalized() * 2.5     # ver weggeslagen
+        monster.raak(5)
+        geluid_afbreken.play()
+
+    def update(self):
+        if slaapt(self):
+            return                       # veel te ver weg: even niks doen
+        self.sla_cooldown -= time.dt
+        doel = self.zoek_monster()
+        if doel is not None:
+            # Een monster! Erop af en meppen.
+            self.look_at(Vec3(doel.x, self.y, doel.z))
+            afstand = Vec3(doel.x - self.x, 0, doel.z - self.z).length()
+            if afstand > 2.0:
+                self.snelheid = 2.1      # rennen
+                self.loop_vooruit()
+            elif self.sla_cooldown <= 0:
+                self.sla_cooldown = 1.2  # even bijkomen na een klap
+                self.mep(doel)
+        elif self.eigen and Vec3(speler.x - self.x, 0, speler.z - self.z).length() > 4:
+            # Een golem die JIJ gemaakt hebt loopt als een maatje met je mee,
+            # zodat hij altijd in de buurt is als er een monster komt.
+            self.snelheid = 2.0
+            self.look_at(Vec3(speler.x, self.y, speler.z))
+            self.loop_vooruit()
+        else:
+            # Geen monsters: rustig een rondje lopen door zijn dorp.
+            self.snelheid = 1.0
+            self.loop_timer -= time.dt
+            if self.loop_timer <= 0:
+                self.loop_timer = random.uniform(2, 5)
+                ver_van_huis = Vec3(self.thuis.x - self.x, 0, self.thuis.z - self.z)
+                if ver_van_huis.length() > 12:
+                    self.look_at(Vec3(self.thuis.x, self.y, self.thuis.z))
+                    self.richting = self.rotation_y     # weer terug naar het dorp
+                else:
+                    self.richting = random.uniform(0, 360)
+            self.rotation_y = self.richting
+            self.loop_vooruit()
+        self.op_de_grond(GOLEM_HOOGTE)
 
 
 class Monster(Levend):
@@ -1976,6 +2160,10 @@ def linker_klik():
         else:
             toon_melding("Loop even wat dichter naar de villager toe om te ruilen.")
         return
+    # Een ijzergolem sla je natuurlijk niet: die is aan JOUW kant!
+    if isinstance(doel, IJzerGolem):
+        toon_melding("De ijzergolem is je vriend. Hij past op je! 🤖")
+        return
     if isinstance(doel, Levend):
         if (doel.world_position - speler.world_position).length() < 5:
             doel.raak(1)
@@ -2107,6 +2295,7 @@ speler.position = (SPAWN_X, spawn_grond + 2, SPAWN_Z)
 
 # Vliegen (alleen in creatief). We onthouden de gewone zwaartekracht.
 STANDAARD_GRAVITY = speler.gravity
+STANDAARD_SPEED   = speler.speed      # hoe snel je normaal loopt
 vliegt = False
 
 
@@ -2131,16 +2320,23 @@ for _ in range(12):
 # --- Villagers: de mensjes die in het dorp wonen ---
 # Bij elk huisje hoort één villager met zijn eigen beroep. Ze staan bij hun
 # voordeur te wachten tot jij komt ruilen.
-villagers = []
-BEROEPEN  = ['Boer', 'Houthakker', 'Mijnwerker', 'Smid']
-for _i, _huis in enumerate(DORP_HUIZEN):
-    _beroep = BEROEPEN[_i % len(BEROEPEN)]
-    _hx, _hy, _hz = _huis
-    # Hij begint net buiten zijn huisje, op het plein.
-    _sx = _hx + random.uniform(-1, 1)
-    _sz = _hz + (HUIS_HALF + 2) * (1 if _hz < DORP_MIDDEN[2] else -1)
-    villagers.append(Villager((_sx, grond_onder(_sx, _sz) + 1.15, _sz),
-                              _beroep, (_hx, _hy, _hz)))
+villagers   = []
+golems      = []              # de ijzergolems die de dorpjes bewaken
+huidig_dorp = None            # in welk dorpje sta je nu? (voor het 'welkom'-berichtje)
+BEROEPEN    = ['Boer', 'Houthakker', 'Mijnwerker', 'Smid']
+for _dorp in DORPEN:
+    for _i, _huis in enumerate(_dorp['huizen']):
+        _beroep = BEROEPEN[_i % len(BEROEPEN)]
+        _hx, _hy, _hz = _huis
+        # Hij begint net buiten zijn huisje, op het plein.
+        _sx = _hx + random.uniform(-1, 1)
+        _sz = _hz + (HUIS_HALF + 2) * (1 if _hz < _dorp['midden'][2] else -1)
+        villagers.append(Villager((_sx, grond_onder(_sx, _sz) + 1.15, _sz),
+                                  _beroep, (_hx, _hy, _hz)))
+    # In elk dorpje staat één ijzergolem op wacht, vlak bij de put.
+    _gx, _gy, _gz = _dorp['midden']
+    golems.append(IJzerGolem((_gx + 3, grond_onder(_gx + 3, _gz) + GOLEM_HOOGTE, _gz + 3),
+                             (_gx, _gy, _gz)))
 
 # De voordeuren van de huisjes neerzetten (deuren die echt open kunnen!).
 # Alleen bij een NIEUWE wereld: in een opgeslagen wereld komen de deuren uit
@@ -2283,15 +2479,24 @@ def leg_sneeuw_neer():
 
 window.fps_counter.enabled = True
 
+# Een regel met alle dorpjes en waar ze staan (2 per regel, anders wordt het te lang)
+_dorp_regels = []
+for _i in range(0, len(DORPEN), 2):
+    _dorp_regels.append("   ".join(
+        f"{_d['naam']} (x={_d['midden'][0]}, z={_d['midden'][2]})"
+        for _d in DORPEN[_i:_i + 2]))
+DORP_UITLEG = "Dorpjes: " + "\n         ".join(_dorp_regels)
+
 # --- Uitleg op het scherm ---
 Text(
     text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op: 's NACHTS komen er monsters! Skeletten schieten pijlen, creepers ONTPLOFFEN (ren weg!).\n"
-         "Er is een DORP met villagers: klik erop met de linkermuis om te RUILEN (smaragd = het geld).\n"
+         "Er zijn DORPJES met villagers: klik erop met de linkermuis om te RUILEN (smaragd = het geld).\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur / hefboom aan-uit\n"
+         "G = ijzergolem neerzetten (4 ijzer + 1 pompoen)   N = boot te water / in- en uitstappen\n"
          "WASD = lopen   1-9/muiswiel = kies blok   Pijltjes = blok verschuiven   Dubbel-spatie = vliegen (creatief)\n"
          "O = opslaan   M = werelden (andere/nieuwe wereld)   Escape = opslaan & stoppen\n"
-         f"Het dorp staat op x={DORP_MIDDEN[0]}, z={DORP_MIDDEN[2]}   (druk F3 om te zien waar jij bent)",
+         + DORP_UITLEG + "   (druk F3 om te zien waar jij bent)",
     position=(-0.85, 0.47),
     scale=1.1,
     background=True,
@@ -2535,14 +2740,16 @@ def werk_honger_bij():
 
 
 def werk_appel_hud():
-    """Laat rechtsboven zien hoeveel appels en sneeuwballen je hebt."""
+    """Laat rechtsboven zien hoeveel appels, sneeuwballen, golems en boten je
+    hebt. Dit zijn dingen die je niet plaatst maar met een TOETS gebruikt."""
     delen = []
-    a = rugzak.get('appel', 0)
-    s = rugzak.get('sneeuwbal', 0)
-    if a > 0:
-        delen.append(f"Appels: {a} (E = eten)")
-    if s > 0:
-        delen.append(f"Sneeuwballen: {s} (B = gooien)")
+    for naam, tekst in (('appel',      "Appels: {} (E = eten)"),
+                        ('sneeuwbal',  "Sneeuwballen: {} (B = gooien)"),
+                        ('ijzergolem', "Golems: {} (G = neerzetten)"),
+                        ('boot',       "Boten: {} (N = te water)")):
+        aantal = rugzak.get(naam, 0)
+        if aantal > 0:
+            delen.append(tekst.format(aantal))
     appel_hud.text = "     ".join(delen)
 
 
@@ -2588,6 +2795,113 @@ def eet_appel():
     werk_appel_hud()
     geluid_plaatsen.play()
     toon_melding("Mmm, lekker! Een appel gegeten.")
+
+
+def zet_golem_neer():
+    """De G-toets: zet een zelfgemaakte ijzergolem voor je neer.
+    Hij loopt daarna rond en beschermt jou tegen de monsters."""
+    if rugzak.get('ijzergolem', 0) <= 0:
+        toon_melding("Je hebt geen ijzergolem. Maak er een van 4 ijzer + 1 pompoen!")
+        return
+    rugzak['ijzergolem'] -= 1
+    werk_appel_hud()
+    werk_hud_bij()
+    plek = speler.world_position + speler.forward * 2.5
+    golem = IJzerGolem((plek.x, grond_onder(plek.x, plek.z) + GOLEM_HOOGTE, plek.z),
+                       (plek.x, 0, plek.z))
+    golem.eigen = True                 # deze heb JIJ gemaakt (die slaan we op)
+    golems.append(golem)
+    geluid_plaatsen.play()
+    toon_melding("Een ijzergolem! Hij past op jou en op het dorp. 🤖")
+
+
+# ======================================================================
+#  DE BOOT ⛵ — snel over het water varen
+# ======================================================================
+# Een boot maak je van 5 hout. Met de N-toets zet je hem op het water, stap je
+# in en stap je er weer uit. Terwijl je vaart ga je bijna twee keer zo snel!
+boten   = []          # alle bootjes die in de wereld liggen
+in_boot = None        # in welke boot zit je nu? (None = je loopt gewoon)
+BOOT_SNELHEID = 9     # hoe snel je vaart (lopen is 5)
+
+
+def maak_boot(pos):
+    """Bouwt een houten bootje: een bodem, twee zijkanten, twee uiteinden
+    en een bankje om op te zitten."""
+    hout   = color.rgb(0.55, 0.38, 0.2)
+    donker = color.rgb(0.42, 0.28, 0.14)
+    boot = Entity(position=pos)
+    Entity(parent=boot, model='cube', color=hout, scale=(1.4, 0.2, 2.4))       # bodem
+    for zijkant in (-0.7, 0.7):                                                 # zijkanten
+        Entity(parent=boot, model='cube', color=donker,
+               position=(zijkant, 0.22, 0), scale=(0.16, 0.45, 2.4))
+    for uiteinde in (-1.2, 1.2):                                                # voor en achter
+        Entity(parent=boot, model='cube', color=donker,
+               position=(0, 0.22, uiteinde), scale=(1.4, 0.45, 0.16))
+    Entity(parent=boot, model='cube', color=hout,
+           position=(0, 0.25, 0), scale=(1.0, 0.12, 0.5))                       # bankje
+    boten.append(boot)
+    return boot
+
+
+def is_water(x, z):
+    """Staat er hier water? (De grond ligt dan lager dan het waterniveau.)
+    We kijken naar het BLOK waar je op staat, dus we ronden eerst af. Anders
+    kijk je net tussen twee blokken in en denkt de boot dat hij op het land
+    ligt terwijl hij gewoon op het water dobbert."""
+    return hoogte_op(round(x), round(z)) < WATER_NIVEAU
+
+
+def stap_in_boot(boot):
+    """Instappen: je zit in de boot en vaart lekker snel."""
+    global in_boot
+    in_boot = boot
+    speler.gravity = 0                     # je zinkt niet, je drijft
+    speler.speed   = BOOT_SNELHEID
+    speler.position = (boot.x, WATER_NIVEAU + 1.1, boot.z)
+    toon_melding("Je vaart! WASD = sturen, N = uitstappen. ⛵")
+
+
+def stap_uit_boot(tekst="Je stapt uit de boot."):
+    """Uitstappen: je loopt weer gewoon (en de boot blijft liggen)."""
+    global in_boot
+    if in_boot is None:
+        return
+    in_boot = None
+    speler.gravity = 0 if vliegt else STANDAARD_GRAVITY
+    speler.speed   = STANDAARD_SPEED
+    speler.y = max(speler.y, grond_onder(speler.x, speler.z) + 1.5)
+    toon_melding(tekst)
+
+
+def boot_toets():
+    """De N-toets doet drie dingen, net welke past:
+    zit je in een boot? -> uitstappen.  Ligt er een boot vlakbij? -> instappen.
+    Anders: een boot uit je rugzak op het water zetten."""
+    if in_boot is not None:
+        stap_uit_boot()
+        return
+    # Ligt er een boot vlakbij? Dan stap je in. We kijken alleen naar de afstand
+    # op de plattegrond, want als je in het water ligt te spartelen zit je lager.
+    for boot in boten:
+        naar = boot.world_position - speler.world_position
+        if Vec3(naar.x, 0, naar.z).length() < 4:
+            stap_in_boot(boot)
+            return
+    if rugzak.get('boot', 0) <= 0:
+        toon_melding("Je hebt geen boot. Maak er een van 5 hout bij de maak-tafel!")
+        return
+    # Een boot moet op het WATER liggen, dus kijken we net voor je neus.
+    plek = speler.world_position + speler.forward * 2.5
+    if not is_water(plek.x, plek.z):
+        toon_melding("Een boot hoort op het WATER. Ga aan de waterkant staan!")
+        return
+    rugzak['boot'] -= 1
+    werk_appel_hud()
+    werk_hud_bij()
+    maak_boot(Vec3(plek.x, WATER_NIVEAU + 0.6, plek.z))
+    geluid_plaatsen.play()
+    toon_melding("Boot te water! Druk op N om in te stappen. ⛵")
 
 
 # --- Maak-tafel (open met 'c', sluit met Escape of de Sluiten-knop) ---
@@ -2806,6 +3120,7 @@ def craft(naam):
     geluid_plaatsen.play()
     werk_maaktafel_bij()
     werk_hud_bij()
+    werk_appel_hud()      # ook golems/boten/appels rechtsboven bijwerken
 
 
 def bij_maaktafel():
@@ -3170,6 +3485,14 @@ if OPGESLAGEN:
                 _stick = getattr(_rec['model'], 'stick', None)
                 if _stick is not None:
                     _stick.rotation_x = -28
+    # De bootjes terugzetten waar je ze had laten liggen
+    for _b in OPGESLAGEN.get('boten', []):
+        maak_boot(Vec3(_b[0], _b[1], _b[2]))
+    # En de golems die JIJ zelf had neergezet
+    for _g in OPGESLAGEN.get('golems', []):
+        _golem = IJzerGolem((_g[0], _g[1], _g[2]), (_g[0], 0, _g[2]))
+        _golem.eigen = True
+        golems.append(_golem)
     # De stukjes rondom de speler meteen bouwen zodat hij niet in de leegte valt
     _pc = chunk_van_pos(speler.x, speler.z)
     for _dcx in range(-1, 2):
@@ -3307,6 +3630,24 @@ def update():
                 toon_melding("Je hebt honger! Eet een appel (E).")
                 doe_schade(1)
 
+    # --- Varen: de boot blijft netjes onder je op het water ---
+    if in_boot is not None:
+        in_boot.position   = Vec3(speler.x, WATER_NIVEAU + 0.6, speler.z)
+        in_boot.rotation_y = speler.rotation_y        # de boot draait met je mee
+        speler.y = WATER_NIVEAU + 1.1                 # je blijft mooi drijven
+        if not is_water(speler.x, speler.z):
+            stap_uit_boot("De boot loopt vast op het land. Je stapt eruit!")
+
+    # --- Kom je een dorpje binnen? Dan zeggen we welkom ---
+    global huidig_dorp
+    _dorp, _afst = dichtstbijzijnde_dorp(speler.x, speler.z)
+    if _dorp is not None and _afst < DORP_HALF:
+        if huidig_dorp is not _dorp:
+            huidig_dorp = _dorp
+            toon_melding(f"Welkom in {_dorp['naam']}! 🏘️")
+    elif _afst > DORP_HALF + 6:
+        huidig_dorp = None            # je bent het dorp weer uit gelopen
+
     # --- Vliegen (creatief): met spatie omhoog en shift omlaag ---
     if vliegt:
         if held_keys['space']:
@@ -3391,6 +3732,10 @@ def update():
         if debug_timer >= 0.25:
             debug_timer = 0.0
             speler_chunk = chunk_van_pos(speler.x, speler.z)
+            bij_dorp, bij_afst = dichtstbijzijnde_dorp(speler.x, speler.z)
+            dorp_regel = ("geen dorpjes" if bij_dorp is None else
+                          f"{bij_dorp['naam']} op x={bij_dorp['midden'][0]}, "
+                          f"z={bij_dorp['midden'][2]} ({round(bij_afst)} blokken)")
             debug_tekst.text = (
                 f"FPS: {round(gemiddelde_fps)}\n"
                 f"Stukjes wereld: {len(chunk_modellen)}\n"
@@ -3398,7 +3743,7 @@ def update():
                 f"Bouw-wachtrij: {len(bouw_wachtrij)}\n"
                 f"Chunk: {speler_chunk}\n"
                 f"Jij staat op: x={round(speler.x)}, z={round(speler.z)}\n"
-                f"Het dorp staat op: x={DORP_MIDDEN[0]}, z={DORP_MIDDEN[2]}"
+                f"Dichtstbijzijnde dorp: {dorp_regel}"
             )
 
     # --- Stukjes laden en lossen als de speler beweegt ---
@@ -3468,6 +3813,16 @@ def input(toets):
     # 'b' gooit een sneeuwbal
     if toets == 'b':
         gooi_sneeuwbal()
+        return
+
+    # 'g' zet een zelfgemaakte ijzergolem neer
+    if toets == 'g':
+        zet_golem_neer()
+        return
+
+    # 'n' = boot: neerzetten, instappen of uitstappen
+    if toets == 'n':
+        boot_toets()
         return
 
     # DUBBEL op spatie tikken = vliegen aan/uit (net als Minecraft, creatief).
