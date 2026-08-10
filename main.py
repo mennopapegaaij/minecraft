@@ -296,14 +296,27 @@ if OPGESLAGEN:
         markeer_extra((_e[0], _e[1], _e[2]), _e[3])
 
 
+_hoogte_onthouden = {}      # plekken die we al eens uitgerekend hebben
+
+
 def hoogte_op(x, z):
-    """Berekent de grondhoogte op positie (x, z) met Perlin ruis."""
+    """Berekent de grondhoogte op positie (x, z) met Perlin ruis.
+    Uitrekenen kost best veel tijd en we vragen het heel vaak voor DEZELFDE
+    plek, dus we onthouden de antwoorden even (dat heet een 'cache').
+    Wordt het lijstje te groot? Dan gooien we het gewoon leeg."""
+    onthouden = _hoogte_onthouden.get((x, z))
+    if onthouden is not None:
+        return onthouden
     nx = x * 0.04
     nz = z * 0.04
     h = (ruis_groot([nx, nz])  * 14 +
          ruis_midden([nx, nz]) *  5 +
          ruis_klein([nx, nz])  *  1.5)
-    return int(h + 10)
+    h = int(h + 10)
+    if len(_hoogte_onthouden) > 300000:
+        _hoogte_onthouden.clear()
+    _hoogte_onthouden[(x, z)] = h
+    return h
 
 
 def steen_of_erts(x, y, z):
@@ -459,12 +472,17 @@ def voeg_boom_toe(blokken, x, grond, z, rng, stam='hout', blad='blad', soort='ro
 # eroverheen liggen. Zo staat het dorp na opnieuw opstarten weer precies op
 # dezelfde plek, en hoeven we er niets extra's voor op te slaan.
 
-DORP_PER_CHUNK = {}     # (cx, cz) -> (blokken om te ZETTEN, plekken om LEEG te maken)
+DORP_PER_CHUNK = {}     # (cx, cz) -> (blokken om te ZETTEN, kolommen om LEEG te maken)
 DORP_DEUREN    = []     # alle voordeuren van alle dorpjes: (positie, richting)
 DORPEN         = []     # alle dorpjes van deze wereld (zie _bedenk_dorp)
+DORP_GROND     = {}     # (x, z) -> de vloerhoogte die het dorp daar gemaakt heeft
 
-HUIS_HALF = 3           # een huisje is 7x7 blokken (3 aan elke kant van het midden)
-DORP_HALF = 13          # het hele dorpsplein is 27x27 blokken
+HUIS_HALF  = 3          # een gewoon huisje is 7x7 blokken
+KAVEL      = 10         # zo ver staan de bouwplekjes ongeveer uit elkaar
+MIN_HUIZEN = 10         # zo klein mag een dorp zijn
+MAX_HUIZEN = 30         # en zo groot mag het worden
+MAX_STEIL  = 11         # meer hoogteverschil dan dit? Dan bouwen we er niet
+VILLAGERS_PER_DORP = 8  # zoveel villagers lopen er in een dorp rond
 
 # Elk dorpje krijgt een eigen naam, zodat je ze uit elkaar kunt houden.
 DORP_NAMEN = ['Eikendorp', 'Zonneveld', 'Steenbrug', 'Molenwijk',
@@ -472,7 +490,7 @@ DORP_NAMEN = ['Eikendorp', 'Zonneveld', 'Steenbrug', 'Molenwijk',
 
 # Hoe ver staan de VERRE dorpjes van je startplek? (van ... tot ... blokken)
 # Het eerste dorpje staat altijd lekker dichtbij, deze moet je gaan ZOEKEN.
-DORP_AFSTANDEN = [(70, 110), (115, 160), (165, 210)]
+DORP_AFSTANDEN = [(120, 165), (195, 250), (270, 330)]
 
 
 def _eerste_dorp_plek():
@@ -498,114 +516,270 @@ def _eerste_dorp_plek():
 
 
 def _dorp_plek(rng, van, tot, al_gekozen):
-    """Zoekt een mooie VLAKKE plek voor een dorpje: tussen 'van' en 'tot' blokken
-    van de startplek, niet in het water en niet bovenop een ander dorpje.
-    We proberen een heleboel plekjes en kiezen de allervlakste."""
+    """Zoekt een plek voor een dorpje: tussen 'van' en 'tot' blokken van de
+    startplek, niet in het water en niet bovenop een ander dorpje.
+    Het hoeft NIET meer kaarsvlak te zijn: een dorp op de heuvels mag ook,
+    want elk gebouwtje krijgt straks zijn eigen vlakke plekje."""
     beste, beste_verschil = None, None
-    for _ in range(80):
+    for _ in range(120):
         hoek = rng.uniform(0, 2 * math.pi)          # een willekeurige richting
         afst = rng.uniform(van, tot)                # en een willekeurige afstand
         vx = int(math.cos(hoek) * afst)
         vz = int(math.sin(hoek) * afst)
-        # Niet bovenop een dorpje dat er al staat
-        if any(abs(vx - ox) < 2 * DORP_HALF + 12 and abs(vz - oz) < 2 * DORP_HALF + 12
-               for ox, oz in al_gekozen):
+        # Niet bovenop (of tegen) een dorpje dat er al staat
+        if any(math.sqrt((vx - ox) ** 2 + (vz - oz) ** 2) < ostraal + 55
+               for ox, oz, ostraal in al_gekozen):
             continue
-        # Hoe vlak is het hier? We meten de hoogte op 9 plekjes.
+        # Het MIDDEN van het dorp mag niet in het water liggen.
+        if hoogte_op(vx, vz) <= WATER_NIVEAU + 2:
+            continue
+        # We geven elke plek punten: veel droog land eromheen is goed,
+        # en een beetje vlak is ook fijn. De plek met de meeste punten wint.
         hoogtes = [hoogte_op(vx + dx, vz + dz)
-                   for dx in (-12, 0, 12) for dz in (-12, 0, 12)]
-        if min(hoogtes) <= WATER_NIVEAU + 1:
-            continue                        # te laag: daar staat water
-        verschil = max(hoogtes) - min(hoogtes)
-        if beste is None or verschil < beste_verschil:
-            beste, beste_verschil = (vx, vz), verschil
+                   for dx in (-16, 0, 16) for dz in (-16, 0, 16)]
+        droog  = sum(1 for h in hoogtes if h > WATER_NIVEAU + 1)
+        punten = droog * 10 - (max(hoogtes) - min(hoogtes))
+        if beste_verschil is None or punten > beste_verschil:
+            beste, beste_verschil = (vx, vz), punten
     return beste
 
 
-def _bouw_huisje(blokken, leeg, dorp, hx, hz, vloer, muur, deur_kant):
-    """Bouwt één huisje van 7x7: vloer, muren, dak, ramen en een deur-opening."""
-    for x in range(hx - HUIS_HALF, hx + HUIS_HALF + 1):
-        for z in range(hz - HUIS_HALF, hz + HUIS_HALF + 1):
-            aan_de_rand = (x in (hx - HUIS_HALF, hx + HUIS_HALF) or
-                           z in (hz - HUIS_HALF, hz + HUIS_HALF))
-            blokken[(x, vloer, z)] = 'planken'            # de houten vloer
-            for y in range(vloer + 1, vloer + 4):          # 3 blokken hoog
-                if aan_de_rand:
-                    blokken[(x, y, z)] = muur              # de muren
-                else:
-                    leeg.add((x, y, z))                    # binnen is het leeg
-            blokken[(x, vloer + 4, z)] = 'hout'            # het dak
+# ---------------------------------------------------------------------------
+#  Gereedschap om te bouwen op een heuvelachtig landschap
+# ---------------------------------------------------------------------------
+
+def _grond_rond(hx, hz, half):
+    """Kijkt hoe de grond rond een bouwplekje ligt.
+    Geeft (laagste, hoogste, gemiddelde) hoogte terug."""
+    hoogtes = [hoogte_op(x, z)
+               for x in range(hx - half, hx + half + 1, 2)
+               for z in range(hz - half, hz + half + 1, 2)]
+    return min(hoogtes), max(hoogtes), round(sum(hoogtes) / len(hoogtes))
+
+
+def _al_bezet(hx, hz, half):
+    """Staat er op dit bouwplekje al iets? We kijken of het dorp hier al grond
+    vlak gemaakt heeft (een ander gebouwtje of het plein met de put)."""
+    for x in range(hx - half, hx + half + 1):
+        for z in range(hz - half, hz + half + 1):
+            if (x, z) in DORP_GROND:
+                return True
+    return False
+
+
+def _maak_leeg(leeg, x, z, van, tot):
+    """Onthoudt dat op deze plek alle blokken van hoogte 'van' tot 'tot' weg
+    moeten (heuvel-toppen en bomen die in de weg staan). We bewaren alleen het
+    BEREIK en niet elk blokje apart: dat scheelt een berg geheugen."""
+    oud = leeg.get((x, z))
+    if oud is not None:
+        van, tot = min(van, oud[0]), max(tot, oud[1])
+    leeg[(x, z)] = (van, tot)
+
+
+def _maak_platform(blokken, leeg, hx, hz, halfx, halfz, vloer, dek):
+    """Maakt een vlak plateautje om op te bouwen. Bovenop komt een laagje
+    'dek', eronder aarde zodat het niet in de lucht zweeft, en alles wat
+    erboven uitsteekt gaat weg. Zo kan een huisje ook op een helling staan."""
+    for x in range(hx - halfx, hx + halfx + 1):
+        for z in range(hz - halfz, hz + halfz + 1):
+            grond = hoogte_op(x, z)
+            blokken[(x, vloer, z)] = dek
+            DORP_GROND[(x, z)] = vloer          # hier loop je op deze hoogte
+            for y in range(min(grond, vloer) - 1, vloer):
+                blokken[(x, y, z)] = 'aarde'    # de heuvel eronder aanvullen
+            _maak_leeg(leeg, x, z, vloer + 1, max(grond, vloer) + 8)
+
+
+def _kant_naar(hx, hz, vx, vz):
+    """Welke kant moet de voordeur op? Naar het midden van het dorp toe."""
+    if abs(vx - hx) > abs(vz - hz):
+        return (1, 0) if vx > hx else (-1, 0)
+    return (0, 1) if vz > hz else (0, -1)
+
+
+def _bouw_huis(blokken, leeg, dorp, hx, hz, vloer, halfx, halfz, muur, dak, kant):
+    """Bouwt een huisje: een vlak plekje, muren, ramen, een dak dat een beetje
+    uitsteekt, en een gat voor de voordeur aan de kant van het dorpsplein."""
+    _maak_platform(blokken, leeg, hx, hz, halfx + 1, halfz + 1, vloer, 'gras')
+    for x in range(hx - halfx, hx + halfx + 1):
+        for z in range(hz - halfz, hz + halfz + 1):
+            aan_de_rand = (x in (hx - halfx, hx + halfx) or
+                           z in (hz - halfz, hz + halfz))
+            blokken[(x, vloer, z)] = 'planken'             # de houten vloer
+            if aan_de_rand:
+                for y in range(vloer + 1, vloer + 4):      # 3 blokken hoog
+                    blokken[(x, y, z)] = muur
+    # Het dak steekt aan alle kanten een blokje uit (net als een echt dak)
+    for x in range(hx - halfx - 1, hx + halfx + 2):
+        for z in range(hz - halfz - 1, hz + halfz + 2):
+            blokken[(x, vloer + 4, z)] = dak
     # Ramen: midden in elke muur een glazen blok, zodat het gezellig is
-    for rx, rz in ((hx, hz - HUIS_HALF), (hx, hz + HUIS_HALF),
-                   (hx - HUIS_HALF, hz), (hx + HUIS_HALF, hz)):
+    for rx, rz in ((hx, hz - halfz), (hx, hz + halfz),
+                   (hx - halfx, hz), (hx + halfx, hz)):
         blokken[(rx, vloer + 2, rz)] = 'glas'
-    # De deur: een gat van 2 blokken hoog in de muur aan de kant van het plein
-    dx = hx + deur_kant[0] * HUIS_HALF
-    dz = hz + deur_kant[1] * HUIS_HALF
+    # De voordeur: een gat van 2 blokken hoog in de muur
+    dx = hx + kant[0] * halfx
+    dz = hz + kant[1] * halfz
     for y in (vloer + 1, vloer + 2):
-        blokken.pop((dx, y, dz), None)     # de muur hier weghalen...
-        leeg.add((dx, y, dz))              # ...en de plek echt leeg maken
-    # Een deur die opendraait. Zit hij in een muur die van links naar rechts
-    # loopt? Dan richting 0, anders een kwartslag gedraaid (90).
-    richting = 0 if deur_kant[1] != 0 else 90
-    DORP_DEUREN.append(((dx, vloer + 1, dz), richting))
+        blokken.pop((dx, y, dz), None)
+    # Zit de deur in een muur die van links naar rechts loopt? Dan richting 0,
+    # anders een kwartslag gedraaid (90).
+    DORP_DEUREN.append(((dx, vloer + 1, dz), 0 if kant[1] != 0 else 90))
     dorp['huizen'].append((hx, vloer + 1, hz))
 
 
-def _bedenk_dorp(naam, vx, vz):
-    """Bedenkt één dorpje: een vlak grasveld, vier huisjes, paadjes en een put.
-    Geeft een 'dorp' terug: een kaartje met de naam, het midden, het vlakke
-    plein en waar de huisjes staan."""
-    vloer = hoogte_op(vx, vz)
-    dorp = {
-        'naam':   naam,
-        'midden': (vx, vloer + 1, vz),
-        'vlak':   (vx - DORP_HALF, vx + DORP_HALF,
-                   vz - DORP_HALF, vz + DORP_HALF, vloer),
-        'huizen': [],
-    }
-    blokken, leeg = {}, set()
+def _bouw_schuur(blokken, leeg, hx, hz, vloer, kant):
+    """Een schuurtje van 5x5 waar de villagers hun hooi in BERGEN.
+    Er zit geen deur in: je loopt er zo naar binnen."""
+    _maak_platform(blokken, leeg, hx, hz, 3, 3, vloer, 'gras')
+    for x in range(hx - 2, hx + 3):
+        for z in range(hz - 2, hz + 3):
+            aan_de_rand = x in (hx - 2, hx + 2) or z in (hz - 2, hz + 2)
+            blokken[(x, vloer, z)] = 'planken'
+            if aan_de_rand:
+                for y in (vloer + 1, vloer + 2):
+                    blokken[(x, y, z)] = 'planken'
+    for x in range(hx - 3, hx + 4):                 # een dak met een randje
+        for z in range(hz - 3, hz + 4):
+            blokken[(x, vloer + 3, z)] = 'hout'
+    # De open ingang aan de kant van het plein
+    dx, dz = hx + kant[0] * 2, hz + kant[1] * 2
+    for y in (vloer + 1, vloer + 2):
+        blokken.pop((dx, y, dz), None)
+    # En binnen een stapeltje hooibalen
+    blokken[(hx, vloer + 1, hz)]         = 'mc_hooibaal'
+    blokken[(hx, vloer + 2, hz)]         = 'mc_hooibaal'
+    blokken[(hx - 1, vloer + 1, hz + 1)] = 'mc_hooibaal'
 
-    # 1) Het land vlak maken: een grasveld op één hoogte, heuvels en bomen weg.
-    for x in range(vx - DORP_HALF, vx + DORP_HALF + 1):
-        for z in range(vz - DORP_HALF, vz + DORP_HALF + 1):
-            grond = hoogte_op(x, z)
-            blokken[(x, vloer, z)] = 'gras'
-            for y in range(vloer - 3, vloer):               # eronder gewoon aarde
-                blokken[(x, y, z)] = 'aarde'
-            # Alles wat er BOVENUIT steekt weghalen (heuvels en bomen)
-            for y in range(vloer + 1, max(grond, vloer) + 9):
-                leeg.add((x, y, z))
 
-    # 2) Vier huisjes op de hoeken van het plein. Elk huisje heeft zijn eigen
-    #    muur-materiaal, zodat het dorp er vrolijk uitziet.
-    MUREN = ['planken', 'baksteen', 'zandsteen', 'planken']
-    HOEKEN = ((-8, -8), (8, -8), (-8, 8), (8, 8))
-    for i, (hx, hz) in enumerate(HOEKEN):
-        kant = (0, 1) if hz < 0 else (0, -1)     # de deur kijkt naar het plein
-        _bouw_huisje(blokken, leeg, dorp, vx + hx, vz + hz, vloer, MUREN[i], kant)
+def _bouw_akker(blokken, leeg, hx, hz, vloer, rng):
+    """Een boerderij-akkertje: een houten randje eromheen, een slootje water in
+    het midden en pompoenen en meloenen op de natte aarde."""
+    _maak_platform(blokken, leeg, hx, hz, 4, 3, vloer, 'aarde')
+    for x in range(hx - 4, hx + 5):
+        for z in range(hz - 3, hz + 4):
+            if x in (hx - 4, hx + 4) or z in (hz - 3, hz + 3):
+                blokken[(x, vloer, z)] = 'hout'          # het randje
+            elif z == hz:
+                blokken[(x, vloer, z)] = 'water'         # het slootje
+            else:
+                blokken[(x, vloer, z)] = 'aarde'         # de natte aarde
+                if rng.random() < 0.7:
+                    blokken[(x, vloer + 1, z)] = rng.choice(['pompoen', 'mc_meloen'])
 
-    # 3) Paadjes van zandsteen: een kruis midden over het plein
-    for d in range(-DORP_HALF, DORP_HALF + 1):
-        blokken[(vx + d, vloer, vz)] = 'zandsteen'
-        blokken[(vx, vloer, vz + d)] = 'zandsteen'
 
-    # 4) Een putje midden op het plein (met echt water erin)
+def _pad(blokken, leeg, x0, z0, x1, z1, pad_tegels):
+    """Legt een zandstenen paadje van een gebouwtje naar het dorpsplein.
+    Het paadje volgt netjes de heuvels omhoog en omlaag, en het stopt zodra
+    het op een ander paadje uitkomt (dan loop je daar verder)."""
+    stappen = max(abs(x1 - x0), abs(z1 - z0), 1)
+    for i in range(stappen + 1):
+        deel = i / stappen
+        x = round(x0 + (x1 - x0) * deel)
+        z = round(z0 + (z1 - z0) * deel)
+        if (x, z) in pad_tegels:
+            return                       # hier ligt al een paadje: klaar
+        if (x, z) in DORP_GROND:
+            continue                     # over een gebouwtje leggen we niks
+        h = hoogte_op(x, z)
+        blokken[(x, h, z)] = 'zandsteen'
+        DORP_GROND[(x, z)] = h
+        pad_tegels.add((x, z))
+        _maak_leeg(leeg, x, z, h + 1, h + 5)     # gras en bomen boven het pad weg
+
+
+def _bedenk_dorp(rng, naam, vx, vz):
+    """Bedenkt één heel dorp: een put in het midden, een heleboel huisjes,
+    schuurtjes en akkertjes die KRISKRAS door elkaar staan (niet op een rij!),
+    met paadjes ertussen. Elk gebouw krijgt zijn eigen vlakke plekje op zijn
+    eigen hoogte, dus het dorp golft gewoon mee met de heuvels."""
+    aantal  = rng.randint(MIN_HUIZEN, MAX_HUIZEN)   # zoveel huizen wil dit dorp
+    schuren = max(2, aantal // 4)
+    akkers  = max(2, aantal // 5)
+    totaal  = aantal + schuren + akkers
+    # Hoeveel ringen bouwplekjes hebben we nodig om dat kwijt te kunnen?
+    # We maken er ruim genoeg, want op een steile helling of in het water
+    # slaan we een plekje gewoon over.
+    ringen = 2
+    while ((2 * ringen + 1) ** 2 - 1) < totaal * 2.5:
+        ringen += 1
+    straal = ringen * KAVEL + 8
+    vloer  = hoogte_op(vx, vz)
+    dorp = {'naam': naam, 'midden': (vx, vloer + 1, vz), 'straal': straal,
+            'huizen': [], 'schuren': 0, 'akkers': 0}
+    blokken, leeg, pad_tegels = {}, {}, set()
+
+    # 1) Het dorpsplein met de put in het midden
+    _maak_platform(blokken, leeg, vx, vz, 4, 4, vloer, 'gras')
     for x in range(vx - 1, vx + 2):
         for z in range(vz - 1, vz + 2):
             if x == vx and z == vz:
-                blokken[(vx, vloer, vz)] = 'water'          # het water
+                blokken[(vx, vloer, vz)] = 'water'       # het water in de put
             else:
-                blokken[(x, vloer + 1, z)] = 'steen'        # de rand eromheen
+                blokken[(x, vloer + 1, z)] = 'steen'     # de rand eromheen
+
+    # 2) De bouwplekjes: een raster met een flinke SLINGER erin, zodat de
+    #    gebouwen lekker scheef door elkaar staan in plaats van op een rij.
+    kavels = []
+    for gx in range(-ringen, ringen + 1):
+        for gz in range(-ringen, ringen + 1):
+            if gx == 0 and gz == 0:
+                continue                                 # daar staat de put
+            kavels.append((vx + gx * KAVEL + rng.randint(-3, 3),
+                           vz + gz * KAVEL + rng.randint(-3, 3)))
+    rng.shuffle(kavels)
+
+    # 3) Wat willen we bouwen? Door elkaar husselen, dan staat het gezellig
+    #    door elkaar: hier een huis, daar een schuurtje, verderop een akker.
+    wensen = ['huis'] * aantal + ['schuur'] * schuren + ['akker'] * akkers
+    rng.shuffle(wensen)
+    MUREN = ['planken', 'baksteen', 'zandsteen', 'mc_mossige_cobble', 'klei']
+    DAKEN = ['hout', 'baksteen', 'hout']
+    gebouwd = []
+
+    for kx, kz in kavels:
+        if not wensen:
+            break
+        soort = wensen[0]
+        half  = 5 if soort == 'akker' else 4
+        # Staat hier al iets? (een ander gebouwtje of het dorpsplein met de put)
+        # Dan bouwen we er niet bovenop, maar zoeken we een ander plekje.
+        if _al_bezet(kx, kz, half):
+            continue
+        laag, hoog, gemiddeld = _grond_rond(kx, kz, half)
+        # In het water of veel te steil? Dan slaan we dit plekje over.
+        # We kijken naar de GEMIDDELDE hoogte: als er in een hoekje net een
+        # slootje zit, vullen we dat gewoon aan met aarde.
+        if gemiddeld <= WATER_NIVEAU + 2 or hoog - laag > MAX_STEIL:
+            continue
+        wensen.pop(0)
+        kant = _kant_naar(kx, kz, vx, vz)
+        if soort == 'huis':
+            # Niet elk huis is even groot: dat staat veel leuker.
+            halfx, halfz = rng.choice([(2, 2), (3, 2), (2, 3), (3, 3), (3, 3)])
+            _bouw_huis(blokken, leeg, dorp, kx, kz, gemiddeld, halfx, halfz,
+                       rng.choice(MUREN), rng.choice(DAKEN), kant)
+        elif soort == 'schuur':
+            _bouw_schuur(blokken, leeg, kx, kz, gemiddeld, kant)
+            dorp['schuren'] += 1
+        else:
+            _bouw_akker(blokken, leeg, kx, kz, gemiddeld, rng)
+            dorp['akkers'] += 1
+        gebouwd.append((kx, kz))
+
+    # 4) Paadjes van elk gebouwtje naar de put in het midden
+    for kx, kz in gebouwd:
+        _pad(blokken, leeg, kx, kz, vx, vz, pad_tegels)
 
     # 5) Alles netjes per stukje wereld sorteren, zodat we het later snel
     #    kunnen opzoeken als zo'n stukje gemaakt wordt.
     for pos, t in blokken.items():
         c = chunk_van_pos(pos[0], pos[2])
-        DORP_PER_CHUNK.setdefault(c, ({}, set()))[0][pos] = t
-    for pos in leeg:
-        c = chunk_van_pos(pos[0], pos[2])
-        DORP_PER_CHUNK.setdefault(c, ({}, set()))[1].add(pos)
+        DORP_PER_CHUNK.setdefault(c, ({}, {}))[0][pos] = t
+    for (x, z), bereik in leeg.items():
+        c = chunk_van_pos(x, z)
+        DORP_PER_CHUNK.setdefault(c, ({}, {}))[1][(x, z)] = bereik
     return dorp
 
 
@@ -615,18 +789,19 @@ def _bedenk_dorpen():
     wereld-zaad, dus in dezelfde wereld staan ze altijd op dezelfde plek."""
     namen = list(DORP_NAMEN)
     random.Random(WERELD_ZAAD + 777).shuffle(namen)   # elke wereld andere namen
+    rng = random.Random(WERELD_ZAAD + 4243)
     # 1) Het dorpje dicht bij je startplek (staat er in oude werelden al).
     dichtbij = _eerste_dorp_plek()
-    gekozen = [dichtbij]
-    DORPEN.append(_bedenk_dorp(namen[0], *dichtbij))
+    DORPEN.append(_bedenk_dorp(rng, namen[0], *dichtbij))
+    gekozen = [(dichtbij[0], dichtbij[1], DORPEN[0]['straal'])]
     # 2) En daarna de verre dorpjes om te ontdekken.
-    rng = random.Random(WERELD_ZAAD + 4243)
     for i, (van, tot) in enumerate(DORP_AFSTANDEN, start=1):
         plek = _dorp_plek(rng, van, tot, gekozen)
         if plek is None:
-            continue                          # hier was geen vlakke plek: jammer
-        gekozen.append(plek)
-        DORPEN.append(_bedenk_dorp(namen[i % len(namen)], *plek))
+            continue                          # hier was geen goede plek: jammer
+        dorp = _bedenk_dorp(rng, namen[i % len(namen)], *plek)
+        DORPEN.append(dorp)
+        gekozen.append((plek[0], plek[1], dorp['straal']))
 
 
 def dichtstbijzijnde_dorp(x, z):
@@ -644,27 +819,28 @@ def dichtstbijzijnde_dorp(x, z):
 
 def zet_dorp_in_chunk(blokken, cx, cz):
     """Zet het stukje dorp dat in dit stukje wereld ligt erin.
-    Eerst leegmaken (heuvels, bomen, de binnenkant van de huisjes),
+    Eerst leegmaken (heuveltoppen en bomen die in de weg staan),
     daarna de blokken van het dorp neerzetten."""
     deel = DORP_PER_CHUNK.get((cx, cz))
     if not deel:
         return
     dorp_blokken, dorp_leeg = deel
-    for pos in dorp_leeg:
-        blokken.pop(pos, None)
+    for (x, z), (van, tot) in dorp_leeg.items():
+        for y in range(van, tot):
+            blokken.pop((x, y, z), None)
     for pos, t in dorp_blokken.items():
         blokken[pos] = t
 
 
 def grond_onder(x, z):
-    """Hoe hoog ligt de grond hier? Op een dorpsplein is dat de vlakke vloer,
-    overal anders het gewone landschap. Dieren, villagers en golems gebruiken
-    dit om netjes op de grond te blijven staan."""
-    for dorp in DORPEN:
-        x0, x1, z0, z1, vloer = dorp['vlak']
-        if x0 <= x <= x1 and z0 <= z <= z1:
-            return vloer
-    return hoogte_op(x, z)
+    """Hoe hoog ligt de grond hier? Op een plekje dat het dorp vlak gemaakt
+    heeft (een huisvloer of een paadje) is dat die vloer, overal anders het
+    gewone landschap. Dieren, villagers en golems gebruiken dit om netjes op
+    de grond te blijven staan, ook als het dorp op een heuvel ligt."""
+    vloer = DORP_GROND.get((round(x), round(z)))
+    if vloer is not None:
+        return vloer
+    return hoogte_op(round(x), round(z))
 
 
 # De dorpjes meteen bedenken, VOORDAT de eerste stukjes wereld gemaakt worden.
@@ -2325,18 +2501,25 @@ golems      = []              # de ijzergolems die de dorpjes bewaken
 huidig_dorp = None            # in welk dorpje sta je nu? (voor het 'welkom'-berichtje)
 BEROEPEN    = ['Boer', 'Houthakker', 'Mijnwerker', 'Smid']
 for _dorp in DORPEN:
-    for _i, _huis in enumerate(_dorp['huizen']):
+    # Een dorp kan wel 30 huizen hebben, maar niet in elk huis woont iemand die
+    # buiten rondloopt. We kiezen er een stuk of 8, mooi verspreid door het dorp.
+    _huizen = _dorp['huizen']
+    _stap   = max(1, len(_huizen) // VILLAGERS_PER_DORP)
+    for _i, _huis in enumerate(_huizen[::_stap][:VILLAGERS_PER_DORP]):
         _beroep = BEROEPEN[_i % len(BEROEPEN)]
         _hx, _hy, _hz = _huis
-        # Hij begint net buiten zijn huisje, op het plein.
+        # Hij begint net buiten zijn huisje.
         _sx = _hx + random.uniform(-1, 1)
         _sz = _hz + (HUIS_HALF + 2) * (1 if _hz < _dorp['midden'][2] else -1)
         villagers.append(Villager((_sx, grond_onder(_sx, _sz) + 1.15, _sz),
                                   _beroep, (_hx, _hy, _hz)))
-    # In elk dorpje staat één ijzergolem op wacht, vlak bij de put.
+    # In elk dorpje staan ijzergolems op wacht: hoe groter het dorp, hoe meer.
     _gx, _gy, _gz = _dorp['midden']
-    golems.append(IJzerGolem((_gx + 3, grond_onder(_gx + 3, _gz) + GOLEM_HOOGTE, _gz + 3),
-                             (_gx, _gy, _gz)))
+    for _n in range(1 + len(_huizen) // 12):
+        _px = _gx + random.randint(-6, 6)
+        _pz = _gz + random.randint(-6, 6)
+        golems.append(IJzerGolem((_px, grond_onder(_px, _pz) + GOLEM_HOOGTE, _pz),
+                                 (_gx, _gy, _gz)))
 
 # De voordeuren van de huisjes neerzetten (deuren die echt open kunnen!).
 # Alleen bij een NIEUWE wereld: in een opgeslagen wereld komen de deuren uit
@@ -2483,7 +2666,7 @@ window.fps_counter.enabled = True
 _dorp_regels = []
 for _i in range(0, len(DORPEN), 2):
     _dorp_regels.append("   ".join(
-        f"{_d['naam']} (x={_d['midden'][0]}, z={_d['midden'][2]})"
+        f"{_d['naam']} ({len(_d['huizen'])} huizen) x={_d['midden'][0]} z={_d['midden'][2]}"
         for _d in DORPEN[_i:_i + 2]))
 DORP_UITLEG = "Dorpjes: " + "\n         ".join(_dorp_regels)
 
@@ -2491,7 +2674,7 @@ DORP_UITLEG = "Dorpjes: " + "\n         ".join(_dorp_regels)
 Text(
     text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op: 's NACHTS komen er monsters! Skeletten schieten pijlen, creepers ONTPLOFFEN (ren weg!).\n"
-         "Er zijn DORPJES met villagers: klik erop met de linkermuis om te RUILEN (smaragd = het geld).\n"
+         "Er zijn grote DORPEN met villagers, schuurtjes en akkers: klik op een villager om te RUILEN.\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur / hefboom aan-uit\n"
          "G = ijzergolem neerzetten (4 ijzer + 1 pompoen)   N = boot te water / in- en uitstappen\n"
          "WASD = lopen   1-9/muiswiel = kies blok   Pijltjes = blok verschuiven   Dubbel-spatie = vliegen (creatief)\n"
@@ -3641,11 +3824,12 @@ def update():
     # --- Kom je een dorpje binnen? Dan zeggen we welkom ---
     global huidig_dorp
     _dorp, _afst = dichtstbijzijnde_dorp(speler.x, speler.z)
-    if _dorp is not None and _afst < DORP_HALF:
+    if _dorp is not None and _afst < _dorp['straal']:
         if huidig_dorp is not _dorp:
             huidig_dorp = _dorp
-            toon_melding(f"Welkom in {_dorp['naam']}! 🏘️")
-    elif _afst > DORP_HALF + 6:
+            toon_melding(f"Welkom in {_dorp['naam']}! 🏘️  "
+                         f"({len(_dorp['huizen'])} huizen)")
+    elif _dorp is not None and _afst > _dorp['straal'] + 8:
         huidig_dorp = None            # je bent het dorp weer uit gelopen
 
     # --- Vliegen (creatief): met spatie omhoog en shift omlaag ---
@@ -3735,7 +3919,9 @@ def update():
             bij_dorp, bij_afst = dichtstbijzijnde_dorp(speler.x, speler.z)
             dorp_regel = ("geen dorpjes" if bij_dorp is None else
                           f"{bij_dorp['naam']} op x={bij_dorp['midden'][0]}, "
-                          f"z={bij_dorp['midden'][2]} ({round(bij_afst)} blokken)")
+                          f"z={bij_dorp['midden'][2]} ({round(bij_afst)} blokken)\n"
+                          f"  {len(bij_dorp['huizen'])} huizen, "
+                          f"{bij_dorp['schuren']} schuurtjes, {bij_dorp['akkers']} akkers")
             debug_tekst.text = (
                 f"FPS: {round(gemiddelde_fps)}\n"
                 f"Stukjes wereld: {len(chunk_modellen)}\n"
