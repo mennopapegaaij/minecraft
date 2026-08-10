@@ -1420,12 +1420,18 @@ class Konijn(Dier):
 
 
 class Monster(Levend):
-    """Een boos monster dat naar je toe loopt en je aanvalt. Sla het terug!"""
+    """Een boos monster dat naar je toe loopt en je aanvalt. Sla het terug!
+    Dit is ook de BASIS voor het skelet en de creeper: die erven het lopen,
+    het kijken naar de speler en het 'vrij_zicht' van dit monster."""
 
     def __init__(self, positie):
         super().__init__(positie, levens=3, lijst=monsters)
         self.snelheid    = 1.9
         self.sla_cooldown = 0
+        self.maak_lijf()          # elk soort monster ziet er anders uit
+
+    def maak_lijf(self):
+        """Bouwt het groene zombie-lijf. Skelet en creeper maken hun eigen lijf."""
         groen  = color.rgb(0.2, 0.5, 0.2)
         donker = color.rgb(0.1, 0.3, 0.1)
         self.maak_deel(color=groen,  position=(0, 0.1, 0),  scale=(0.8, 1.2, 0.5))   # lijf
@@ -1436,6 +1442,16 @@ class Monster(Levend):
         for px in (-0.22, 0.22):
             self.maak_deel(color=donker, position=(px, -0.6, 0), scale=(0.25, 0.7, 0.3))  # benen
 
+    def loop_vooruit(self, achteruit=False):
+        """Zet een stapje vooruit (of achteruit), maar NIET door muren heen.
+        We voelen eerst met een straaltje: zit er vlak voor zijn neus een blok?
+        Dan blijft hij staan."""
+        voor = self.forward * (-1 if achteruit else 1)
+        muur = raycast(self.world_position, voor, distance=0.6,
+                       ignore=[self] + monsters + dieren)
+        if not muur.hit:
+            self.position += voor * time.dt * self.snelheid
+
     def update(self):
         # Reken uit welke kant de speler op is (alleen plat, niet omhoog/omlaag)
         naar = speler.world_position - self.world_position
@@ -1443,14 +1459,8 @@ class Monster(Levend):
         afstand = plat.length()
         if afstand > 0.1:
             self.look_at(Vec3(speler.x, self.y, speler.z))   # kijk naar de speler
-            if afstand > 1.3:                                # loop ernaartoe...
-                # ...maar NIET door muren! We voelen eerst met een straaltje
-                # vooruit. Zit er vlak voor zijn neus een blok? Dan blijft hij staan.
-                voor = self.forward
-                muur = raycast(self.world_position, voor, distance=0.6,
-                               ignore=[self] + monsters + dieren)
-                if not muur.hit:
-                    self.position += voor * time.dt * self.snelheid
+            if afstand > 1.3:                                # loop ernaartoe
+                self.loop_vooruit()
         self.op_de_grond(1.0)
         # Het monster mag je ALLEEN slaan als het ECHT naast je staat:
         #  1) vlakbij op de plattegrond (naast je, niet ver weg),
@@ -1476,6 +1486,219 @@ class Monster(Levend):
         straal = raycast(oog, naar.normalized(), distance=afst,
                          ignore=[self] + monsters + dieren)
         return not straal.hit                           # niks geraakt = vrij zicht
+
+
+class Skelet(Monster):
+    """Een skelet houdt AFSTAND en schiet pijlen op je. Kom dichtbij, want
+    van dichtbij loopt hij juist bij je weg!"""
+
+    def __init__(self, positie):
+        super().__init__(positie)
+        self.snelheid    = 1.6
+        self.schiet_timer = random.uniform(1.0, 2.0)   # hoe lang tot de volgende pijl
+
+    def maak_lijf(self):
+        bot    = color.rgb(0.9, 0.9, 0.85)      # botwit
+        zwart  = color.rgb(0.05, 0.05, 0.05)
+        hout   = color.rgb(0.45, 0.3, 0.15)
+        self.maak_deel(color=bot,   position=(0, 0.1, 0),   scale=(0.45, 1.2, 0.3))  # smal lijf
+        self.maak_deel(color=bot,   position=(0, 0.95, 0),  scale=(0.55, 0.55, 0.55))  # kop
+        for ex in (-0.13, 0.13):                                                     # oogkassen
+            self.maak_deel(color=zwart, position=(ex, 1.0, 0.26), scale=(0.14, 0.14, 0.08))
+        for ax in (-0.35, 0.35):                                                     # dunne armen
+            self.maak_deel(color=bot, position=(ax, 0.3, 0.25), scale=(0.15, 0.15, 0.8))
+        self.maak_deel(color=hout, position=(0, 0.3, 0.6), scale=(0.08, 0.8, 0.08))  # de boog
+        for px in (-0.14, 0.14):                                                     # dunne benen
+            self.maak_deel(color=bot, position=(px, -0.6, 0), scale=(0.16, 0.7, 0.16))
+
+    def update(self):
+        naar = speler.world_position - self.world_position
+        plat = Vec3(naar.x, 0, naar.z)
+        afstand = plat.length()
+        if afstand > 0.1:
+            self.look_at(Vec3(speler.x, self.y, speler.z))   # kijk naar de speler
+            # Een skelet wil je op AFSTAND houden: te ver weg? Kom dichterbij.
+            # Te dichtbij? Loop juist achteruit. Daartussenin blijft hij staan.
+            if afstand > 9:
+                self.loop_vooruit()
+            elif afstand < 5:
+                self.loop_vooruit(achteruit=True)
+        self.op_de_grond(1.0)
+        # Af en toe een pijl schieten, maar alleen als hij je echt kan zien.
+        self.schiet_timer -= time.dt
+        if self.schiet_timer <= 0 and afstand < 14 and self.vrij_zicht():
+            self.schiet_timer = random.uniform(1.8, 2.6)
+            self.schiet_pijl()
+
+    def schiet_pijl(self):
+        """Schiet een pijl richting de speler."""
+        start = self.world_position + Vec3(0, 1.0, 0)        # vanaf zijn hoofd
+        doel  = speler.world_position + Vec3(0, 1.0, 0)      # naar jouw lijf
+        richting = (doel - start).normalized()
+        pijl = Entity(model='cube', color=color.rgb(0.5, 0.35, 0.2),
+                      scale=(0.07, 0.07, 0.7), position=start)
+        pijl.look_at(doel)                                    # met de punt vooruit
+        pijl.snelheid = richting * 18 + Vec3(0, 1.5, 0)       # een beetje omhoog mikken
+        pijl.leeftijd = 0.0
+        pijlen_vliegend.append(pijl)
+
+
+class Creeper(Monster):
+    """Een creeper rent naar je toe, gaat SISSEN en ontploft dan met een
+    grote knal: een gat in de wereld en flink wat schade. Ren op tijd weg!"""
+
+    LONT_TIJD = 1.5      # hoeveel seconden hij sist voordat hij knalt
+    KNAL_STRAAL = 3      # hoe groot het gat wordt (in blokken)
+
+    def __init__(self, positie):
+        super().__init__(positie)
+        self.snelheid = 2.2
+        self.lont     = None       # None = nog niet aan het sissen
+        # De eigen kleuren onthouden, zodat we tijdens het sissen kunnen
+        # knipperen en daarna weer netjes terug kunnen kleuren.
+        self.kleuren  = [deel.color for deel in self.delen]
+
+    def maak_lijf(self):
+        groen  = color.rgb(0.35, 0.65, 0.3)
+        donker = color.rgb(0.2, 0.45, 0.2)
+        zwart  = color.rgb(0.05, 0.1, 0.05)
+        self.maak_deel(color=groen, position=(0, 0.25, 0),  scale=(0.6, 1.1, 0.4))   # hoog lijf
+        self.maak_deel(color=groen, position=(0, 1.05, 0),  scale=(0.65, 0.65, 0.5)) # vierkante kop
+        # Het bekende creeper-gezicht: twee ogen en een mond
+        for ex in (-0.16, 0.16):
+            self.maak_deel(color=zwart, position=(ex, 1.15, 0.26), scale=(0.18, 0.18, 0.06))
+        self.maak_deel(color=zwart, position=(0, 0.95, 0.26), scale=(0.18, 0.28, 0.06))
+        for ex in (-0.14, 0.14):
+            self.maak_deel(color=zwart, position=(ex, 0.87, 0.26), scale=(0.1, 0.12, 0.06))
+        # Vier korte pootjes en GEEN armen (net als in het echte spel)
+        for px in (-0.18, 0.18):
+            for pz in (-0.15, 0.15):
+                self.maak_deel(color=donker, position=(px, -0.5, pz), scale=(0.22, 0.45, 0.2))
+
+    def update(self):
+        naar = speler.world_position - self.world_position
+        plat = Vec3(naar.x, 0, naar.z)
+        afstand = plat.length()
+        if afstand > 0.1:
+            self.look_at(Vec3(speler.x, self.y, speler.z))
+        self.op_de_grond(0.75)
+
+        if self.lont is None:
+            # Nog niet aan het sissen: gewoon achter de speler aan rennen.
+            if afstand > 1.3:
+                self.loop_vooruit()
+            # Dichtbij genoeg én hij ziet je? Dan begint de lont te branden!
+            if afstand < 2.5 and abs(naar.y) < 2.5 and self.vrij_zicht():
+                self.start_sissen()
+        else:
+            # De lont brandt: hij staat stil, knippert wit en telt af.
+            self.lont -= time.dt
+            self.knipper(int(self.lont * 8) % 2 == 0)
+            if afstand > 4.5:
+                self.stop_sissen()        # je bent ontsnapt, hij kalmeert weer
+            elif self.lont <= 0:
+                self.ontplof()
+
+    def knipper(self, wit):
+        """Zet alle lichaamsdelen wit (wit=True) of weer in hun eigen kleur."""
+        for deel, kleur in zip(self.delen, self.kleuren):
+            deel.color = color.white if wit else kleur
+
+    def start_sissen(self):
+        """Ssssss... de creeper zwelt op en gaat knipperen."""
+        self.lont = Creeper.LONT_TIJD
+        self.animate_scale(1.3, duration=Creeper.LONT_TIJD)
+        geluid_wissel.play()
+
+    def stop_sissen(self):
+        """Je bent weggerend: de creeper wordt weer rustig."""
+        self.lont = None
+        self.animate_scale(1.0, duration=0.3)
+        self.knipper(False)               # weer zijn eigen kleur
+
+    def ontplof(self):
+        """BOEM! Schade voor alles in de buurt en een gat in de wereld."""
+        midden = self.world_position
+        # 1) Schade voor de speler: hoe dichterbij, hoe meer het pijn doet.
+        afstand = (speler.world_position - midden).length()
+        if afstand < 5:
+            doe_schade(max(1, 6 - int(afstand)))
+        # 2) Andere dieren en monsters in de buurt krijgen er ook van langs.
+        for wezen in list(monsters) + list(dieren):
+            if wezen is not self and (wezen.world_position - midden).length() < 4:
+                wezen.raak(3)
+        # 3) Een gat in de blokken
+        blaas_blokken_weg(midden, Creeper.KNAL_STRAAL)
+        # 4) Een mooie knal om naar te kijken
+        knal_effect(midden)
+        toon_melding("BOEM! Een creeper is ontploft! 💥")
+        self.ga_dood()
+
+
+def knal_effect(midden):
+    """Een oranje bol die groeit en verdwijnt, plus rondvliegende steenbrokjes."""
+    bol = Entity(model='sphere', color=color.rgb(1.0, 0.6, 0.1), position=midden,
+                 scale=0.5, alpha=0.8)
+    bol.animate_scale(6, duration=0.35)
+    bol.animate('alpha', 0, duration=0.35)
+    destroy(bol, delay=0.4)
+    for _ in range(12):
+        brok = Entity(model='cube', color=color.rgb(0.4, 0.4, 0.4), scale=0.2,
+                      position=midden)
+        brok.animate_position(midden + Vec3(random.uniform(-3, 3),
+                                            random.uniform(0, 3),
+                                            random.uniform(-3, 3)), duration=0.5)
+        brok.animate_scale(0, duration=0.5)
+        destroy(brok, delay=0.55)
+    geluid_afbreken.play()
+
+
+def blaas_blokken_weg(midden, straal):
+    """Haalt alle blokken binnen een bol weg (het gat van een creeper).
+    Je krijgt deze blokken NIET in je rugzak: ze zijn kapot!"""
+    mx, my, mz = round(midden.x), round(midden.y), round(midden.z)
+    weg_gehaald = []
+    redstone_veranderd = False
+    for dx in range(-straal, straal + 1):
+        for dy in range(-straal, straal + 1):
+            for dz in range(-straal, straal + 1):
+                # Alleen binnen de BOL (anders wordt het een vierkant gat)
+                if dx * dx + dy * dy + dz * dz > straal * straal:
+                    continue
+                pos = (mx + dx, my + dy, mz + dz)
+                t = wereld.get(pos)
+                if t is None or t in ('water', 'lava'):
+                    continue                     # water en lava laten we staan
+                # Het blok echt weghalen (net als in voltooi_breken, maar
+                # zonder dat je het in je rugzak krijgt).
+                wereld.pop(pos)
+                cx, cz = chunk_van_pos(pos[0], pos[2])
+                chunk_blokken.get((cx, cz), {}).pop(pos, None)
+                markeer_weg(pos)                 # onthouden, ook voor het opslaan
+                if t in DRAAD_TYPES or t in LAMP_TYPES or t == 'redstone_blok':
+                    registreer_redstone_blok(pos, t, False)
+                    redstone_veranderd = True
+                # Lag hier een sneeuwlaagje? Dat waait ook weg.
+                laag = sneeuw_lagen.pop((pos[0], pos[2]), None)
+                if laag:
+                    destroy(laag)
+                weg_gehaald.append(pos)
+    if not weg_gehaald:
+        return
+    # Onder het gat de wereld weer aanvullen, zodat je geen leegte ziet.
+    for pos in weg_gehaald:
+        onthul_buren(pos)
+    # Alle stukjes wereld die geraakt zijn ÉÉN keer opnieuw bouwen.
+    # (Per blok herbouwen zou veel te traag zijn!)
+    chunks = set()
+    for pos in weg_gehaald:
+        for dx, dz in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
+            chunks.add(chunk_van_pos(pos[0] + dx, pos[2] + dz))
+    for chunk in chunks:
+        if chunk in chunk_modellen:
+            bouw_chunk_model(*chunk)
+    if redstone_veranderd:
+        werk_redstone_bij()
 
 
 def linker_klik():
@@ -1706,6 +1929,7 @@ sneeuw_volgorde = collections.deque()        # om de oudste weg te halen als het
 MAX_SNEEUW_LAGEN = 260
 smelt_timer     = 0.0                         # om sneeuw langzaam te laten smelten
 sneeuwballen_vliegend = []                    # sneeuwballen die nu door de lucht vliegen
+pijlen_vliegend       = []                    # pijlen van skeletten die nu vliegen
 
 
 def _nieuwe_deeltjes_plek(d, hoog=False):
@@ -1770,7 +1994,7 @@ window.fps_counter.enabled = True
 # --- Uitleg op het scherm ---
 Text(
     text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
-         "Pas op: 's NACHTS komen er monsters! Sla ze met de linkermuis. Hartjes = je levens.\n"
+         "Pas op: 's NACHTS komen er monsters! Skeletten schieten pijlen, creepers ONTPLOFFEN (ren weg!).\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur / hefboom aan-uit\n"
          "WASD = lopen   1-9/muiswiel = kies blok   Pijltjes = blok verschuiven   Dubbel-spatie = vliegen (creatief)\n"
          "O = opslaan   M = werelden (andere/nieuwe wereld)   Escape = opslaan & stoppen",
@@ -2636,6 +2860,23 @@ def update():
             sneeuwballen_vliegend.remove(bal)
             destroy(bal)
 
+    # --- Pijlen van skeletten laten vliegen (net als de sneeuwballen) ---
+    for pijl in list(pijlen_vliegend):
+        pijl.snelheid += Vec3(0, -9, 0) * time.dt     # zwaartekracht (pijlen zakken)
+        pijl.position += pijl.snelheid * time.dt
+        pijl.leeftijd += time.dt
+        # Raakt de pijl JOU? Dan gaat er een hartje af.
+        raak_speler = (speler.world_position + Vec3(0, 1, 0)
+                       - pijl.world_position).length() < 1.1
+        if raak_speler:
+            doe_schade(1)
+            toon_melding("Au! Een pijl van een skelet! 🏹")
+        # Geraakt, op de grond gevallen of te lang onderweg? Dan is hij op.
+        if (raak_speler or pijl.leeftijd > 5
+                or pijl.y < hoogte_op(pijl.x, pijl.z) + 0.1):
+            pijlen_vliegend.remove(pijl)
+            destroy(pijl)
+
     # --- Honger: loopt langzaam leeg. Is hij op, dan doet het pijn (eet appels!) ---
     global honger, honger_timer, honger_pijn_timer
     if not CREATIEF:
@@ -2667,7 +2908,10 @@ def update():
         afst = random.uniform(18, 28)
         mx = speler.x + math.cos(hoek) * afst
         mz = speler.z + math.sin(hoek) * afst
-        monsters.append(Monster((mx, hoogte_op(mx, mz) + 1.0, mz)))
+        # Welk monster wordt het? Het gewone monster komt het vaakst,
+        # daarna af en toe een skelet of een creeper.
+        soort = random.choice([Monster, Monster, Skelet, Creeper])
+        monsters.append(soort((mx, hoogte_op(mx, mz) + 1.0, mz)))
 
     # --- Dag en nacht laten verlopen ---
     dag_tijd += time.dt
