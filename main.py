@@ -451,6 +451,155 @@ def voeg_boom_toe(blokken, x, grond, z, rng, stam='hout', blad='blad', soort='ro
                         blokken[(x + bx, top + by, z + bz)] = blad
 
 
+# ============================================================================
+#  HET DORP 🏘️  — een paar huisjes waar de villagers wonen
+# ============================================================================
+# Het dorp hoort BIJ de wereld, net als de bomen. We bedenken het één keer aan
+# het begin uit het wereld-zaad. Daarna zetten we het in de stukjes wereld die
+# eroverheen liggen. Zo staat het dorp na opnieuw opstarten weer precies op
+# dezelfde plek, en hoeven we er niets extra's voor op te slaan.
+
+DORP_PER_CHUNK = {}     # (cx, cz) -> (blokken om te ZETTEN, plekken om LEEG te maken)
+DORP_DEUREN    = []     # de deuren van de huisjes: (positie, richting)
+DORP_HUIZEN    = []     # het midden van elk huisje (daar wonen de villagers)
+DORP_MIDDEN    = None   # het midden van het dorp (x, y, z)
+DORP_VLAK      = None   # (x_van, x_tot, z_van, z_tot, vloerhoogte) van het plein
+
+HUIS_HALF = 3           # een huisje is 7x7 blokken (3 aan elke kant van het midden)
+DORP_HALF = 13          # het hele dorpsplein is 27x27 blokken
+
+
+def _dorp_plek():
+    """Zoekt een mooie VLAKKE plek voor het dorp, niet te ver van de startplek
+    en niet in het water. We proberen een paar plekjes en kiezen de vlakste."""
+    rng = random.Random(WERELD_ZAAD + 4242)
+    beste, beste_verschil = None, None
+    for _ in range(40):
+        vx = rng.randint(-45, 45)
+        vz = rng.randint(-45, 45)
+        if abs(vx) < 18 and abs(vz) < 18:
+            continue                        # niet bovenop je startplek bouwen
+        # Hoe vlak is het hier? We meten de hoogte op 9 plekjes.
+        hoogtes = [hoogte_op(vx + dx, vz + dz)
+                   for dx in (-12, 0, 12) for dz in (-12, 0, 12)]
+        if min(hoogtes) <= WATER_NIVEAU + 1:
+            continue                        # te laag: daar staat water
+        verschil = max(hoogtes) - min(hoogtes)
+        if beste is None or verschil < beste_verschil:
+            beste, beste_verschil = (vx, vz), verschil
+    return beste or (26, 26)
+
+
+def _bouw_huisje(blokken, leeg, hx, hz, vloer, muur, deur_kant):
+    """Bouwt één huisje van 7x7: vloer, muren, dak, ramen en een deur-opening."""
+    for x in range(hx - HUIS_HALF, hx + HUIS_HALF + 1):
+        for z in range(hz - HUIS_HALF, hz + HUIS_HALF + 1):
+            aan_de_rand = (x in (hx - HUIS_HALF, hx + HUIS_HALF) or
+                           z in (hz - HUIS_HALF, hz + HUIS_HALF))
+            blokken[(x, vloer, z)] = 'planken'            # de houten vloer
+            for y in range(vloer + 1, vloer + 4):          # 3 blokken hoog
+                if aan_de_rand:
+                    blokken[(x, y, z)] = muur              # de muren
+                else:
+                    leeg.add((x, y, z))                    # binnen is het leeg
+            blokken[(x, vloer + 4, z)] = 'hout'            # het dak
+    # Ramen: midden in elke muur een glazen blok, zodat het gezellig is
+    for rx, rz in ((hx, hz - HUIS_HALF), (hx, hz + HUIS_HALF),
+                   (hx - HUIS_HALF, hz), (hx + HUIS_HALF, hz)):
+        blokken[(rx, vloer + 2, rz)] = 'glas'
+    # De deur: een gat van 2 blokken hoog in de muur aan de kant van het plein
+    dx = hx + deur_kant[0] * HUIS_HALF
+    dz = hz + deur_kant[1] * HUIS_HALF
+    for y in (vloer + 1, vloer + 2):
+        blokken.pop((dx, y, dz), None)     # de muur hier weghalen...
+        leeg.add((dx, y, dz))              # ...en de plek echt leeg maken
+    # Een deur die opendraait. Zit hij in een muur die van links naar rechts
+    # loopt? Dan richting 0, anders een kwartslag gedraaid (90).
+    richting = 0 if deur_kant[1] != 0 else 90
+    DORP_DEUREN.append(((dx, vloer + 1, dz), richting))
+    DORP_HUIZEN.append((hx, vloer + 1, hz))
+
+
+def _bedenk_dorp():
+    """Bedenkt het hele dorp: een vlak grasveld, vier huisjes, paadjes en een put."""
+    global DORP_MIDDEN, DORP_VLAK
+    vx, vz = _dorp_plek()
+    vloer = hoogte_op(vx, vz)
+    DORP_MIDDEN = (vx, vloer + 1, vz)
+    DORP_VLAK   = (vx - DORP_HALF, vx + DORP_HALF, vz - DORP_HALF, vz + DORP_HALF, vloer)
+    blokken, leeg = {}, set()
+
+    # 1) Het land vlak maken: een grasveld op één hoogte, heuvels en bomen weg.
+    for x in range(vx - DORP_HALF, vx + DORP_HALF + 1):
+        for z in range(vz - DORP_HALF, vz + DORP_HALF + 1):
+            grond = hoogte_op(x, z)
+            blokken[(x, vloer, z)] = 'gras'
+            for y in range(vloer - 3, vloer):               # eronder gewoon aarde
+                blokken[(x, y, z)] = 'aarde'
+            # Alles wat er BOVENUIT steekt weghalen (heuvels en bomen)
+            for y in range(vloer + 1, max(grond, vloer) + 9):
+                leeg.add((x, y, z))
+
+    # 2) Vier huisjes op de hoeken van het plein. Elk huisje heeft zijn eigen
+    #    muur-materiaal, zodat het dorp er vrolijk uitziet.
+    MUREN = ['planken', 'baksteen', 'zandsteen', 'planken']
+    HOEKEN = ((-8, -8), (8, -8), (-8, 8), (8, 8))
+    for i, (hx, hz) in enumerate(HOEKEN):
+        kant = (0, 1) if hz < 0 else (0, -1)     # de deur kijkt naar het plein
+        _bouw_huisje(blokken, leeg, vx + hx, vz + hz, vloer, MUREN[i], kant)
+
+    # 3) Paadjes van zandsteen: een kruis midden over het plein
+    for d in range(-DORP_HALF, DORP_HALF + 1):
+        blokken[(vx + d, vloer, vz)] = 'zandsteen'
+        blokken[(vx, vloer, vz + d)] = 'zandsteen'
+
+    # 4) Een putje midden op het plein (met echt water erin)
+    for x in range(vx - 1, vx + 2):
+        for z in range(vz - 1, vz + 2):
+            if x == vx and z == vz:
+                blokken[(vx, vloer, vz)] = 'water'          # het water
+            else:
+                blokken[(x, vloer + 1, z)] = 'steen'        # de rand eromheen
+
+    # 5) Alles netjes per stukje wereld sorteren, zodat we het later snel
+    #    kunnen opzoeken als zo'n stukje gemaakt wordt.
+    for pos, t in blokken.items():
+        c = chunk_van_pos(pos[0], pos[2])
+        DORP_PER_CHUNK.setdefault(c, ({}, set()))[0][pos] = t
+    for pos in leeg:
+        c = chunk_van_pos(pos[0], pos[2])
+        DORP_PER_CHUNK.setdefault(c, ({}, set()))[1].add(pos)
+
+
+def zet_dorp_in_chunk(blokken, cx, cz):
+    """Zet het stukje dorp dat in dit stukje wereld ligt erin.
+    Eerst leegmaken (heuvels, bomen, de binnenkant van de huisjes),
+    daarna de blokken van het dorp neerzetten."""
+    deel = DORP_PER_CHUNK.get((cx, cz))
+    if not deel:
+        return
+    dorp_blokken, dorp_leeg = deel
+    for pos in dorp_leeg:
+        blokken.pop(pos, None)
+    for pos, t in dorp_blokken.items():
+        blokken[pos] = t
+
+
+def grond_onder(x, z):
+    """Hoe hoog ligt de grond hier? Op het dorpsplein is dat de vlakke vloer,
+    overal anders het gewone landschap. Dieren en villagers gebruiken dit om
+    netjes op de grond te blijven staan."""
+    if DORP_VLAK is not None:
+        x0, x1, z0, z1, vloer = DORP_VLAK
+        if x0 <= x <= x1 and z0 <= z <= z1:
+            return vloer
+    return hoogte_op(x, z)
+
+
+# Het dorp meteen bedenken, VOORDAT de eerste stukjes wereld gemaakt worden.
+_bedenk_dorp()
+
+
 def genereer_chunk_data(cx, cz):
     """Bedenkt welke blokken er in een stukje wereld staan (alleen getallen,
     nog geen 3D-modellen). Slaat ze op in het telefoonboek."""
@@ -501,6 +650,9 @@ def genereer_chunk_data(cx, cz):
                     voeg_boom_toe(blokken, x, grond, z, rng, stam, blad, vorm)
                 elif rng.random() < 0.04:
                     blokken[(x, grond + 1, z)] = 'paddenstoel'  # klein paddenstoeltje
+
+    # Ligt er een stukje DORP in dit stukje wereld? Dan die huisjes erin zetten.
+    zet_dorp_in_chunk(blokken, cx, cz)
 
     # De wijzigingen van de speler toepassen: eerst de erbij gekomen blokken
     # (geplaatst of opgegraven), daarna de weggehaalde weer verwijderen.
@@ -1307,8 +1459,24 @@ class Levend(Entity):
         destroy(self)
 
     def op_de_grond(self, hoogte):
-        """Houd het wezen netjes op de grond."""
-        self.y = hoogte_op(self.x, self.z) + hoogte
+        """Houd het wezen netjes op de grond (ook op het vlakke dorpsplein)."""
+        self.y = grond_onder(self.x, self.z) + hoogte
+
+    def loop_vooruit(self, achteruit=False):
+        """Zet een stapje vooruit (of achteruit), maar NIET door muren heen.
+        We voelen eerst met een straaltje: zit er vlak voor zijn neus een blok?
+        Dan blijft hij staan."""
+        voor = self.forward * (-1 if achteruit else 1)
+        muur = raycast(self.world_position, voor, distance=0.6,
+                       ignore=[self] + alle_wezens())
+        if not muur.hit:
+            self.position += voor * time.dt * self.snelheid
+
+
+def alle_wezens():
+    """Alle dieren, villagers en monsters bij elkaar. Handig om straaltjes
+    (raycasts) ze te laten NEGEREN: we willen alleen echte blokken voelen."""
+    return monsters + dieren + villagers
 
 
 class Dier(Levend):
@@ -1419,6 +1587,111 @@ class Konijn(Dier):
             self.maak_deel(color=bruin, position=(px, -0.28, -0.05), scale=(0.12, 0.3, 0.16))  # pootjes
 
 
+# --- Wat de villagers met je willen RUILEN ---
+# Elk beroep heeft zijn eigen ruiltjes: (wat je GEEFT, wat je KRIJGT).
+# Smaragd is het geld van het dorp, net als in het echte Minecraft!
+HANDEL = {
+    'Boer': [
+        ({'appel': 6},    {'smaragd': 1}),
+        ({'smaragd': 1},  {'appel': 4}),
+        ({'smaragd': 2},  {'pompoen': 3}),
+    ],
+    'Houthakker': [
+        ({'hout': 10},    {'smaragd': 1}),
+        ({'smaragd': 1},  {'planken': 8}),
+        ({'smaragd': 2},  {'deur': 1}),
+    ],
+    'Mijnwerker': [
+        ({'steen': 15},   {'smaragd': 1}),
+        ({'kool': 8},     {'smaragd': 1}),
+        ({'smaragd': 3},  {'ijzer': 2}),
+        ({'smaragd': 6},  {'diamant': 1}),
+    ],
+    'Smid': [
+        ({'ijzer': 3},    {'smaragd': 1}),
+        ({'smaragd': 4},  {'goud': 2}),
+        ({'smaragd': 5},  {'ijzeren_pikhouweel': 1}),
+    ],
+}
+
+# De kleur van het schort dat bij elk beroep hoort (zo herken je ze!)
+BEROEP_KLEUR = {
+    'Boer':       color.rgb(0.85, 0.75, 0.25),   # geel als stro
+    'Houthakker': color.rgb(0.55, 0.35, 0.18),   # bruin als hout
+    'Mijnwerker': color.rgb(0.45, 0.45, 0.5),    # grijs als steen
+    'Smid':       color.rgb(0.2,  0.25, 0.3),    # donker als ijzer
+}
+
+
+class Villager(Levend):
+    """Een villager (dorpeling): een vriendelijk mensje uit het dorp.
+    Klik erop met de linkermuis en je kunt met hem RUILEN.
+    's Nachts loopt hij naar huis, en voor monsters rent hij hard weg!"""
+
+    def __init__(self, positie, beroep, thuis):
+        super().__init__(positie, levens=6, lijst=villagers)
+        self.beroep   = beroep
+        self.thuis    = Vec3(*thuis)      # bij welk huisje hoort hij?
+        self.snelheid = 1.1
+        huid    = color.rgb(0.78, 0.62, 0.48)
+        mantel  = color.rgb(0.45, 0.3, 0.2)
+        schort  = BEROEP_KLEUR[beroep]
+        donker  = color.rgb(0.15, 0.12, 0.1)
+        self.maak_deel(color=mantel, position=(0, 0.15, 0),  scale=(0.55, 1.2, 0.35))  # mantel
+        self.maak_deel(color=schort, position=(0, 0.35, 0),  scale=(0.58, 0.4, 0.38))  # schort
+        self.maak_deel(color=mantel, position=(0, 0.15, 0.2), scale=(0.62, 0.22, 0.18))  # armen
+        self.maak_deel(color=huid,   position=(0, 1.05, 0),  scale=(0.5, 0.55, 0.45))  # kop
+        # De beroemde GROTE neus van een villager
+        self.maak_deel(color=color.rgb(0.7, 0.54, 0.4), position=(0, 1.0, 0.28),
+                       scale=(0.16, 0.3, 0.2))
+        for ex in (-0.15, 0.15):                                                       # ogen
+            self.maak_deel(color=color.rgb(0.2, 0.25, 0.5), position=(ex, 1.18, 0.23),
+                           scale=(0.1, 0.12, 0.06))
+        self.maak_deel(color=donker, position=(0, 1.3, 0.23), scale=(0.45, 0.07, 0.05))  # wenkbrauw
+        for px in (-0.13, 0.13):                                                       # benen
+            self.maak_deel(color=donker, position=(px, -0.6, 0), scale=(0.18, 0.6, 0.2))
+
+    def dichtstbijzijnde_monster(self):
+        """Loopt er een monster vlakbij? Geef dan het dichtstbijzijnde terug."""
+        dichtste, kortste = None, 9
+        for m in monsters:
+            d = (m.world_position - self.world_position).length()
+            if d < kortste:
+                dichtste, kortste = m, d
+        return dichtste
+
+    def update(self):
+        bang_voor = self.dichtstbijzijnde_monster()
+        if bang_voor is not None:
+            # Help, een monster! Wegrennen, precies de andere kant op.
+            weg = self.world_position - bang_voor.world_position
+            self.look_at(self.world_position + Vec3(weg.x, 0, weg.z))
+            self.snelheid = 2.6                      # rennen gaat sneller
+            self.loop_vooruit()
+        elif het_is_nacht:
+            # 's Nachts wil hij lekker naar huis.
+            self.snelheid = 1.4
+            naar_huis = Vec3(self.thuis.x - self.x, 0, self.thuis.z - self.z)
+            if naar_huis.length() > 1.0:
+                self.look_at(Vec3(self.thuis.x, self.y, self.thuis.z))
+                self.loop_vooruit()
+        else:
+            # Overdag rustig rondwandelen, maar wel in de buurt van zijn huisje.
+            self.snelheid = 1.1
+            self.loop_timer -= time.dt
+            if self.loop_timer <= 0:
+                self.loop_timer = random.uniform(1.5, 4)
+                ver_van_huis = Vec3(self.thuis.x - self.x, 0, self.thuis.z - self.z)
+                if ver_van_huis.length() > 10:
+                    self.look_at(Vec3(self.thuis.x, self.y, self.thuis.z))
+                    self.richting = self.rotation_y      # weer richting huis
+                else:
+                    self.richting = random.uniform(0, 360)
+            self.rotation_y = self.richting
+            self.loop_vooruit()
+        self.op_de_grond(1.15)
+
+
 class Monster(Levend):
     """Een boos monster dat naar je toe loopt en je aanvalt. Sla het terug!
     Dit is ook de BASIS voor het skelet en de creeper: die erven het lopen,
@@ -1441,16 +1714,6 @@ class Monster(Levend):
                            scale=(0.12, 0.12, 0.1))
         for px in (-0.22, 0.22):
             self.maak_deel(color=donker, position=(px, -0.6, 0), scale=(0.25, 0.7, 0.3))  # benen
-
-    def loop_vooruit(self, achteruit=False):
-        """Zet een stapje vooruit (of achteruit), maar NIET door muren heen.
-        We voelen eerst met een straaltje: zit er vlak voor zijn neus een blok?
-        Dan blijft hij staan."""
-        voor = self.forward * (-1 if achteruit else 1)
-        muur = raycast(self.world_position, voor, distance=0.6,
-                       ignore=[self] + monsters + dieren)
-        if not muur.hit:
-            self.position += voor * time.dt * self.snelheid
 
     def update(self):
         # Reken uit welke kant de speler op is (alleen plat, niet omhoog/omlaag)
@@ -1484,7 +1747,7 @@ class Monster(Levend):
         if afst < 0.01:
             return True
         straal = raycast(oog, naar.normalized(), distance=afst,
-                         ignore=[self] + monsters + dieren)
+                         ignore=[self] + alle_wezens())
         return not straal.hit                           # niks geraakt = vrij zicht
 
 
@@ -1623,8 +1886,8 @@ class Creeper(Monster):
         afstand = (speler.world_position - midden).length()
         if afstand < 5:
             doe_schade(max(1, 6 - int(afstand)))
-        # 2) Andere dieren en monsters in de buurt krijgen er ook van langs.
-        for wezen in list(monsters) + list(dieren):
+        # 2) Andere dieren, villagers en monsters in de buurt krijgen er ook van langs.
+        for wezen in alle_wezens():
             if wezen is not self and (wezen.world_position - midden).length() < 4:
                 wezen.raak(3)
         # 3) Een gat in de blokken
@@ -1702,10 +1965,17 @@ def blaas_blokken_weg(midden, straal):
 
 
 def linker_klik():
-    """Linkermuis indrukken: sla een dier/monster, of sloop meteen een
-    zelfgemaakt ding. Gewone blokken hak je door de muis INGEDRUKT te houden
-    (dat regelt werk_hakken_bij elke frame)."""
+    """Linkermuis indrukken: RUIL met een villager, sla een dier/monster, of
+    sloop meteen een zelfgemaakt ding. Gewone blokken hak je door de muis
+    INGEDRUKT te houden (dat regelt werk_hakken_bij elke frame)."""
     doel = mouse.hovered_entity
+    # Klik je op een villager? Dan ga je RUILEN in plaats van slaan.
+    if isinstance(doel, Villager):
+        if (doel.world_position - speler.world_position).length() < 5:
+            toon_ruil_scherm(doel)
+        else:
+            toon_melding("Loop even wat dichter naar de villager toe om te ruilen.")
+        return
     if isinstance(doel, Levend):
         if (doel.world_position - speler.world_position).length() < 5:
             doel.raak(1)
@@ -1774,7 +2044,7 @@ def werk_hakken_bij():
     global hak_pos, hak_verstreken, hak_doel_duur, hak_fase
 
     # Alleen hakken als de linkermuis ingedrukt is en het menu dicht is
-    bezig = held_keys['left mouse'] and not maaktafel.enabled
+    bezig = held_keys['left mouse'] and not maaktafel.enabled and not ruil_scherm.enabled
     doel = doel_hak_blok() if bezig else None
 
     if doel is None:                     # niks (meer) om te hakken
@@ -1856,6 +2126,28 @@ for _ in range(12):
     dz = SPAWN_Z + random.randint(-18, 18)
     soort = random.choice(DIER_SOORTEN)        # kies willekeurig een diersoort
     dieren.append(soort((dx, hoogte_op(dx, dz) + 1.2, dz)))
+
+
+# --- Villagers: de mensjes die in het dorp wonen ---
+# Bij elk huisje hoort één villager met zijn eigen beroep. Ze staan bij hun
+# voordeur te wachten tot jij komt ruilen.
+villagers = []
+BEROEPEN  = ['Boer', 'Houthakker', 'Mijnwerker', 'Smid']
+for _i, _huis in enumerate(DORP_HUIZEN):
+    _beroep = BEROEPEN[_i % len(BEROEPEN)]
+    _hx, _hy, _hz = _huis
+    # Hij begint net buiten zijn huisje, op het plein.
+    _sx = _hx + random.uniform(-1, 1)
+    _sz = _hz + (HUIS_HALF + 2) * (1 if _hz < DORP_MIDDEN[2] else -1)
+    villagers.append(Villager((_sx, grond_onder(_sx, _sz) + 1.15, _sz),
+                              _beroep, (_hx, _hy, _hz)))
+
+# De voordeuren van de huisjes neerzetten (deuren die echt open kunnen!).
+# Alleen bij een NIEUWE wereld: in een opgeslagen wereld komen de deuren uit
+# het opslagbestand, want misschien heb je er zelf een weggehaald.
+if not OPGESLAGEN:
+    for _pos, _richting in DORP_DEUREN:
+        plaats_speciaal('deur', _pos, _richting)
 
 
 # Waarmee kun je dieren voeren? (bladeren, paddenstoelen, groente)
@@ -1995,9 +2287,11 @@ window.fps_counter.enabled = True
 Text(
     text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op: 's NACHTS komen er monsters! Skeletten schieten pijlen, creepers ONTPLOFFEN (ren weg!).\n"
+         "Er is een DORP met villagers: klik erop met de linkermuis om te RUILEN (smaragd = het geld).\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur / hefboom aan-uit\n"
          "WASD = lopen   1-9/muiswiel = kies blok   Pijltjes = blok verschuiven   Dubbel-spatie = vliegen (creatief)\n"
-         "O = opslaan   M = werelden (andere/nieuwe wereld)   Escape = opslaan & stoppen",
+         "O = opslaan   M = werelden (andere/nieuwe wereld)   Escape = opslaan & stoppen\n"
+         f"Het dorp staat op x={DORP_MIDDEN[0]}, z={DORP_MIDDEN[2]}   (druk F3 om te zien waar jij bent)",
     position=(-0.85, 0.47),
     scale=1.1,
     background=True,
@@ -2555,6 +2849,127 @@ sluit_knop.on_click = verberg_maaktafel
 
 
 # ======================================================================
+#  RUILEN MET EEN VILLAGER 🤝
+# ======================================================================
+# Klik met de linkermuis op een villager en dit schermpje gaat open.
+# Je ziet dan wat hij wil ruilen: geef iets, krijg iets terug.
+ruil_scherm = Entity(parent=camera.ui, enabled=False)
+Entity(parent=ruil_scherm, model='quad', color=color.rgba(0, 0, 0, 0.9),
+       scale=(1.2, 0.9), z=1)
+ruil_titel = Text(parent=ruil_scherm, text="", position=(0, 0.36),
+                  origin=(0, 0), scale=1.3)
+ruil_rugzak_tekst = Text(parent=ruil_scherm, text="", position=(-0.55, 0.22),
+                         origin=(-0.5, 0.5), scale=0.8)
+
+MAX_RUILEN = 4                 # zoveel ruiltjes kan een villager hebben
+ruil_knoppen = []
+for _i in range(MAX_RUILEN):
+    _knop = Button(parent=ruil_scherm, text="-", scale=(0.62, 0.09),
+                   position=(0.13, 0.20 - _i * 0.11), color=color.azure)
+    _knop.text_entity.scale *= 0.7
+    ruil_knoppen.append(_knop)
+
+ruil_sluit_knop = Button(parent=ruil_scherm, text="Sluiten (Esc)", scale=(0.25, 0.07),
+                         position=(0, -0.35), color=color.red)
+ruil_villager = None           # met wie ben je nu aan het ruilen?
+
+
+def _spullen_tekst(spullen):
+    """Maakt van {'hout': 10} de tekst '10x hout (elke soort)'."""
+    delen = []
+    for naam, aantal in spullen.items():
+        toon = ITEM_NAMEN.get(naam, naam)
+        if naam == 'hout':
+            toon = 'hout (elke soort)'
+        delen.append(f"{aantal}x {toon}")
+    return " + ".join(delen)
+
+
+def kan_ruilen(kosten):
+    """Heb je genoeg in je rugzak voor dit ruiltje?
+    Voor 'hout' telt elke houtsoort mee (net als bij de maak-tafel)."""
+    for naam, aantal in kosten.items():
+        heb = totaal_hout() if naam == 'hout' else rugzak.get(naam, 0)
+        if heb < aantal:
+            return False
+    return True
+
+
+def ruil(index):
+    """Doe het ruiltje waar je op klikt: betalen en je beloning krijgen."""
+    if ruil_villager is None:
+        return
+    kosten, krijgt = HANDEL[ruil_villager.beroep][index]
+    if CREATIEF:
+        toon_melding("In de creatieve modus heb je alles al gratis!")
+        return
+    if not kan_ruilen(kosten):
+        toon_melding("Je hebt niet genoeg om dit te ruilen!")
+        return
+    # Betalen ('hout' mag van elke houtsoort)
+    for naam, aantal in kosten.items():
+        if naam == 'hout':
+            betaal_hout(aantal)
+        else:
+            rugzak[naam] -= aantal
+    # En je beloning erbij
+    for naam, aantal in krijgt.items():
+        rugzak[naam] = rugzak.get(naam, 0) + aantal
+    geluid_plaatsen.play()
+    toon_hartjes(ruil_villager.world_position)      # de villager is blij!
+    toon_melding("Geruild! Je kreeg " + _spullen_tekst(krijgt))
+    werk_ruil_bij()
+    werk_hud_bij()
+    werk_appel_hud()
+
+
+def werk_ruil_bij():
+    """Vult de knoppen met de ruiltjes van deze villager en kleurt ze:
+    groen = dit kun je betalen, grijs = daar heb je nog te weinig voor."""
+    if ruil_villager is None:
+        return
+    ruiltjes = HANDEL[ruil_villager.beroep]
+    for i, knop in enumerate(ruil_knoppen):
+        if i < len(ruiltjes):
+            kosten, krijgt = ruiltjes[i]
+            knop.text = (f"GEEF  {_spullen_tekst(kosten)}\n"
+                         f"KRIJG  {_spullen_tekst(krijgt)}")
+            knop.color    = color.lime if kan_ruilen(kosten) else color.gray
+            knop.on_click = Func(ruil, i)
+            knop.enabled  = True
+        else:
+            knop.enabled = False
+    # Links laten zien wat je bij je hebt om mee te betalen
+    spullen = ['smaragd', 'hout', 'steen', 'kool', 'ijzer', 'goud', 'diamant', 'appel']
+    ruil_rugzak_tekst.text = "Je rugzak:\n" + "\n".join(
+        f"{'hout (alle)' if s == 'hout' else s}: "
+        f"{totaal_hout() if s == 'hout' else rugzak.get(s, 0)}" for s in spullen)
+
+
+def toon_ruil_scherm(villager):
+    """Opent het ruil-schermpje van deze villager."""
+    global ruil_villager
+    ruil_villager = villager
+    ruil_scherm.enabled = True
+    mouse.locked  = False
+    mouse.visible = True
+    ruil_titel.text = f"{villager.beroep.upper()}   -   klik op een ruiltje om te ruilen"
+    werk_ruil_bij()
+
+
+def verberg_ruil_scherm():
+    """Sluit het ruil-schermpje en vergrendelt de muis weer."""
+    global ruil_villager
+    ruil_villager = None
+    ruil_scherm.enabled = False
+    mouse.locked  = True
+    mouse.visible = False
+
+
+ruil_sluit_knop.on_click = verberg_ruil_scherm
+
+
+# ======================================================================
 #  WERELDEN-MENU: meerdere werelden opslaan en een nieuwe wereld beginnen
 # ======================================================================
 werelden_menu = Entity(parent=camera.ui, enabled=False)
@@ -2847,15 +3262,15 @@ def update():
         bal.position += bal.snelheid * time.dt
         bal.leeftijd += time.dt
         geraakt = False
-        # Raakt de sneeuwbal een dier of monster? Geef een tikje.
-        for wezen in list(monsters) + list(dieren):
+        # Raakt de sneeuwbal een dier, villager of monster? Geef een tikje.
+        for wezen in alle_wezens():
             if (wezen.world_position - bal.world_position).length() < 1.1:
                 if isinstance(wezen, Monster):
                     wezen.raak(1)
                 geraakt = True
                 break
         # Op de grond gevallen of te lang onderweg? Dan poef.
-        if geraakt or bal.leeftijd > 3 or bal.y < hoogte_op(bal.x, bal.z) + 0.2:
+        if geraakt or bal.leeftijd > 3 or bal.y < grond_onder(bal.x, bal.z) + 0.2:
             _sneeuwbal_poef(bal.world_position)
             sneeuwballen_vliegend.remove(bal)
             destroy(bal)
@@ -2873,7 +3288,7 @@ def update():
             toon_melding("Au! Een pijl van een skelet! 🏹")
         # Geraakt, op de grond gevallen of te lang onderweg? Dan is hij op.
         if (raak_speler or pijl.leeftijd > 5
-                or pijl.y < hoogte_op(pijl.x, pijl.z) + 0.1):
+                or pijl.y < grond_onder(pijl.x, pijl.z) + 0.1):
             pijlen_vliegend.remove(pijl)
             destroy(pijl)
 
@@ -2981,7 +3396,9 @@ def update():
                 f"Stukjes wereld: {len(chunk_modellen)}\n"
                 f"Blokken in geheugen: {len(wereld)}\n"
                 f"Bouw-wachtrij: {len(bouw_wachtrij)}\n"
-                f"Chunk: {speler_chunk}"
+                f"Chunk: {speler_chunk}\n"
+                f"Jij staat op: x={round(speler.x)}, z={round(speler.z)}\n"
+                f"Het dorp staat op: x={DORP_MIDDEN[0]}, z={DORP_MIDDEN[2]}"
             )
 
     # --- Stukjes laden en lossen als de speler beweegt ---
@@ -3009,6 +3426,8 @@ def input(toets):
     if toets == 'escape':
         if maaktafel.enabled:
             verberg_maaktafel()
+        elif ruil_scherm.enabled:
+            verberg_ruil_scherm()
         elif werelden_menu.enabled:
             verberg_werelden_menu()
         else:
@@ -3018,7 +3437,7 @@ def input(toets):
 
     # Is er een menu OPEN? Dan doen we verder niets met toetsen, zodat je rustig
     # in een typvakje kunt typen zonder dat er per ongeluk iets anders gebeurt.
-    if maaktafel.enabled or werelden_menu.enabled:
+    if maaktafel.enabled or werelden_menu.enabled or ruil_scherm.enabled:
         return
 
     # 'c' opent de maak-tafel
