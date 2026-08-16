@@ -6,3 +6,6 @@ __pycache__/
 wereld_opslag.json
 werelden/
 huidige_wereld.txt
+
+# Het meet-lijstje van de profiler (maak je zelf met F4, hoort niet in git)
+profiel.txt

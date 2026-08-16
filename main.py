@@ -12,8 +12,77 @@ import os
 import sys
 import subprocess
 import shutil
+import contextlib
+import cProfile          # de profiler: meet hoeveel tijd elke functie kost
+import pstats            # om het profiler-lijstje netjes te sorteren
 
 app = Ursina()
+
+# ======================================================================
+#  METEN: waar gaat de reken-tijd (CPU-tijd) heen?
+# ======================================================================
+# Twee hulpjes om het spel op te meten, zonder dat je er last van hebt:
+#  * 'meet(...)'  -> een stopwatch voor een STUKJE code (zie F3-scherm).
+#  * de profiler  -> meet ALLE functies een paar seconden lang (toets F4).
+#
+# 'metingen' telt per onderdeel de tijd van DEZE frame op (in seconden).
+# 'metingen_gem' is het rustige gemiddelde dat we op het scherm laten zien,
+# zodat de getalletjes niet als een gek heen en weer springen.
+metingen     = collections.defaultdict(float)
+metingen_gem = collections.defaultdict(float)
+
+
+@contextlib.contextmanager
+def meet(naam):
+    """Stopwatch-helper. Gebruik zo:
+        with meet("weer"):
+            ...code die je wilt klokken...
+    De verstreken tijd wordt opgeteld bij metingen[naam]."""
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        metingen[naam] += time.perf_counter() - start
+
+
+def klok_methode(naam):
+    """Maakt van een update-methode een geklokte versie: de tijd die het wezen
+    in zijn eigen update() doorbrengt wordt opgeteld bij metingen[naam]. Zo zien
+    we hoeveel tijd ALLE dieren, villagers en monsters samen kosten."""
+    def wikkel(func):
+        def geklokt(self):
+            start = time.perf_counter()
+            func(self)
+            metingen[naam] += time.perf_counter() - start
+        return geklokt
+    return wikkel
+
+
+# De profiler (toets F4). Hij kijkt een paar seconden mee en schrijft daarna
+# een lijstje weg met de zwaarste functies bovenaan.
+PROFIEL_SECONDEN = 5.0            # zo lang meet de profiler
+profiel          = None          # de actieve profiler (None = staat uit)
+profiel_stop_tijd = 0.0          # wanneer moet hij stoppen?
+
+
+def _schrijf_profiel(prof):
+    """Zet het profiler-resultaat in 'profiel.txt': de zwaarste functies bovenaan.
+    We maken twee lijstjes:
+      * op 'cumulative': functies die (met alles wat ze aanroepen) het meest kosten,
+      * op 'tottime':    functies die IN ZICHZELF de meeste tijd kosten."""
+    import io
+    with open('profiel.txt', 'w', encoding='utf-8') as f:
+        for sortering in ('cumulative', 'tottime'):
+            buf = io.StringIO()
+            stats = pstats.Stats(prof, stream=buf)
+            stats.sort_stats(sortering)
+            f.write(f"\n===== Zwaarste functies gesorteerd op '{sortering}' =====\n")
+            stats.print_stats(30)               # de top-30
+            f.write(buf.getvalue())
+    # Ook een kort lijstje naar de console, zodat je het meteen ziet.
+    print("\n" + "=" * 60)
+    print("PROFIEL KLAAR -> zie profiel.txt. Top volgens 'tottime':")
+    pstats.Stats(prof).sort_stats('tottime').print_stats(12)
 
 # --- Instellingen ---
 CHUNK_GROOTTE    = 8    # Een stukje wereld is 8x8 blokken groot
@@ -1759,6 +1828,7 @@ class Dier(Levend):
         self.scale = 0.5
         self.groeit = True
 
+    @klok_methode('wezens')
     def update(self):
         self.loop_timer -= time.dt
         if self.loop_timer <= 0:                     # af en toe een nieuwe kant op
@@ -1928,6 +1998,7 @@ class Villager(Levend):
                 dichtste, kortste = m, d
         return dichtste
 
+    @klok_methode('wezens')
     def update(self):
         if slaapt(self):
             return                  # hij woont in een dorp ver weg: even niks doen
@@ -2014,6 +2085,7 @@ class IJzerGolem(Levend):
         monster.raak(5)
         geluid_afbreken.play()
 
+    @klok_methode('wezens')
     def update(self):
         if slaapt(self):
             return                       # veel te ver weg: even niks doen
@@ -2075,6 +2147,7 @@ class Monster(Levend):
         for px in (-0.22, 0.22):
             self.maak_deel(color=donker, position=(px, -0.6, 0), scale=(0.25, 0.7, 0.3))  # benen
 
+    @klok_methode('wezens')
     def update(self):
         # Reken uit welke kant de speler op is (alleen plat, niet omhoog/omlaag)
         naar = speler.world_position - self.world_position
@@ -2134,6 +2207,7 @@ class Skelet(Monster):
         for px in (-0.14, 0.14):                                                     # dunne benen
             self.maak_deel(color=bot, position=(px, -0.6, 0), scale=(0.16, 0.7, 0.16))
 
+    @klok_methode('wezens')
     def update(self):
         naar = speler.world_position - self.world_position
         plat = Vec3(naar.x, 0, naar.z)
@@ -2198,6 +2272,7 @@ class Creeper(Monster):
             for pz in (-0.15, 0.15):
                 self.maak_deel(color=donker, position=(px, -0.5, pz), scale=(0.22, 0.45, 0.2))
 
+    @klok_methode('wezens')
     def update(self):
         naar = speler.world_position - self.world_position
         plat = Vec3(naar.x, 0, naar.z)
@@ -3692,6 +3767,20 @@ def update():
     """Wordt elke frame aangeroepen: dag/nacht, bouwen en stukjes beheren."""
     global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd, monster_timer
     global het_is_nacht, vorige_zoek, huidige_pagina, autosave_timer
+    global profiel, profiel_stop_tijd
+
+    # --- Profiler: is de meettijd voorbij? Dan stoppen en het lijstje wegschrijven ---
+    if profiel is not None and time.perf_counter() >= profiel_stop_tijd:
+        profiel.disable()
+        _schrijf_profiel(profiel)
+        toon_melding("Profiel klaar! Kijk in profiel.txt. 📄")
+        profiel = None
+
+    # --- Stopwatch: de tijden van de vorige frame in het rustige gemiddelde
+    #     vouwen, en daarna op nul zetten voor deze nieuwe frame. ---
+    for _naam, _tijd in metingen.items():
+        metingen_gem[_naam] = metingen_gem[_naam] * 0.9 + _tijd * 0.1
+    metingen.clear()
 
     # --- Zoekbalk: typ je iets nieuws? Dan meteen opnieuw zoeken (pagina 1) ---
     if maaktafel.enabled and zoekveld.text != vorige_zoek:
@@ -3720,6 +3809,7 @@ def update():
 
     # --- Weer: af en toe regen of sneeuw, en de deeltjes laten vallen ---
     global weer, weer_timer, sneeuw_leg_timer
+    _t_weer = time.perf_counter()          # stopwatch: hoe duur is het weer?
     weer_timer -= time.dt
     if weer_timer <= 0:
         if weer == 'helder':
@@ -3761,7 +3851,10 @@ def update():
                 _e = sneeuw_lagen.pop(oud, None)
                 if _e:
                     destroy(_e)
+    metingen['weer'] += time.perf_counter() - _t_weer
 
+    # --- Vliegende sneeuwballen en pijlen laten vliegen ---
+    _t_proj = time.perf_counter()          # stopwatch: sneeuwballen + pijlen
     # --- Vliegende sneeuwballen laten vliegen (met zwaartekracht) ---
     for bal in list(sneeuwballen_vliegend):
         bal.snelheid += Vec3(0, -12, 0) * time.dt     # zwaartekracht
@@ -3797,6 +3890,7 @@ def update():
                 or pijl.y < grond_onder(pijl.x, pijl.z) + 0.1):
             pijlen_vliegend.remove(pijl)
             destroy(pijl)
+    metingen['projectielen'] += time.perf_counter() - _t_proj
 
     # --- Honger: loopt langzaam leeg. Is hij op, dan doet het pijn (eet appels!) ---
     global honger, honger_timer, honger_pijn_timer
@@ -3864,9 +3958,11 @@ def update():
     # een beetje maanlicht (MAANLICHT) zodat het donker is maar niet pikzwart.
     # We draaien aan de 'daglicht'-knop van elk chunk-model (onze eigen shader).
     daglicht = max(MAANLICHT, helder)
+    _t_daglicht = time.perf_counter()      # stopwatch: de dag/nacht-lus over alle chunks
     for modellen in chunk_modellen.values():
         for model in modellen:
             model.set_shader_input('daglicht', daglicht)
+    metingen['daglicht'] += time.perf_counter() - _t_daglicht
 
     # Is het nacht? (de zon staat onder de horizon). Wordt het net dag?
     # Dan verbranden alle monsters in de zon en is het weer veilig!
@@ -3908,7 +4004,9 @@ def update():
     if bouw_wachtrij:
         cx, cz = bouw_wachtrij.popleft()
         if (cx, cz) not in chunk_modellen:
+            _t_bouw = time.perf_counter()  # stopwatch: een stukje wereld bouwen
             bouw_chunk_model(cx, cz)
+            metingen['chunk_bouwen'] += time.perf_counter() - _t_bouw
 
     # --- Meet-schermpje bijwerken ---
     if debug_tekst.enabled:
@@ -3922,6 +4020,11 @@ def update():
                           f"z={bij_dorp['midden'][2]} ({round(bij_afst)} blokken)\n"
                           f"  {len(bij_dorp['huizen'])} huizen, "
                           f"{bij_dorp['schuren']} schuurtjes, {bij_dorp['akkers']} akkers")
+            # De stopwatch-tijden per onderdeel (van veel naar weinig), in ms.
+            tijd_regels = ""
+            for _naam, _sec in sorted(metingen_gem.items(),
+                                      key=lambda p: p[1], reverse=True):
+                tijd_regels += f"  {_naam}: {_sec * 1000:.1f} ms\n"
             debug_tekst.text = (
                 f"FPS: {round(gemiddelde_fps)}\n"
                 f"Stukjes wereld: {len(chunk_modellen)}\n"
@@ -3929,6 +4032,7 @@ def update():
                 f"Bouw-wachtrij: {len(bouw_wachtrij)}\n"
                 f"Chunk: {speler_chunk}\n"
                 f"Jij staat op: x={round(speler.x)}, z={round(speler.z)}\n"
+                f"Tijd per onderdeel (F4 = profiler):\n{tijd_regels}"
                 f"Dichtstbijzijnde dorp: {dorp_regel}"
             )
 
@@ -4045,5 +4149,20 @@ def input(toets):
         debug_tekst.enabled        = not debug_tekst.enabled
         window.fps_counter.enabled = debug_tekst.enabled
 
+    # F4: de profiler een paar seconden laten meekijken. Daarna schrijft hij
+    # 'profiel.txt' met de zwaarste functies bovenaan (zie update()).
+    if toets == 'f4':
+        global profiel, profiel_stop_tijd
+        if profiel is None:
+            profiel = cProfile.Profile()
+            profiel_stop_tijd = time.perf_counter() + PROFIEL_SECONDEN
+            profiel.enable()
+            toon_melding(f"Profiler meet {int(PROFIEL_SECONDEN)} sec... loop rond! ⏱️")
+        else:
+            toon_melding("De profiler is al bezig...")
 
+
+if os.environ.get('MC_PROFTEST'):
+    with open('run_marker.txt', 'w', encoding='utf-8') as _rf:
+        _rf.write(f"voor app.run at perf={time.perf_counter():.2f}\n")
 app.run()
