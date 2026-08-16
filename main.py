@@ -3715,6 +3715,7 @@ def toggle_deur():
 # --- Meet-schermpje (linksonder) ---
 debug_tekst = Text(text="", position=(-0.85, -0.30), scale=1.1, background=True)
 gemiddelde_fps = 50.0
+_fps_vorige_tijd = time.perf_counter()   # voor de ECHTE fps-meting (zie update)
 debug_timer    = 0.0
 monster_timer  = 0.0      # om af en toe een nieuw monster te laten verschijnen
 autosave_timer = 0.0      # om af en toe automatisch op te slaan
@@ -3997,8 +3998,16 @@ def update():
             speler.position = (speler.x, grond_hier + 2, speler.z)
 
     # --- FPS meten ---
-    if time.dt > 0:
-        gemiddelde_fps = gemiddelde_fps * 0.95 + (1 / time.dt) * 0.05
+    # LET OP: we gebruiken hier NIET time.dt! Die is met setMaxDt(1/30) begrensd,
+    # waardoor de teller nooit onder de 30 kan zakken (ook al hapert het echt).
+    # Daarom meten we met een echte klok (perf_counter) de tijd tussen twee
+    # beeldjes. Zo zie je de ECHTE framerate, ook als die onder de 30 komt.
+    global _fps_vorige_tijd
+    _nu = time.perf_counter()
+    _echte_dt = _nu - _fps_vorige_tijd
+    _fps_vorige_tijd = _nu
+    if _echte_dt > 0:
+        gemiddelde_fps = gemiddelde_fps * 0.9 + (1 / _echte_dt) * 0.1
 
     # --- Per frame één stukje wereld samenplakken (spreidt het werk) ---
     if bouw_wachtrij:
