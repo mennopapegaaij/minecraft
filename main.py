@@ -446,6 +446,65 @@ BUREN = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
 LICHT_DOORLATEND = {'glas', 'water'}
 
 
+# ---------------------------------------------------------------------------
+#  De 6 KANTEN van een blok (om zelf snel een stukje-wereld-model te bouwen)
+# ---------------------------------------------------------------------------
+# Vroeger maakten we voor ELK blok een compleet kubusje en lieten we Ursina die
+# met combine() samenplakken. Dat samenplakken was VEEL te traag (de grootste
+# oorzaak van het haperen bij lopen). Nu bouwen we het model zelf: per zichtbare
+# KANT plakken we een plat vierkantje (2 driehoekjes = 6 punten). Kanten die
+# tegen een ander dicht blok aan zitten, zie je toch niet, dus die slaan we over.
+# Dat scheelt dubbel: veel minder rekenwerk én veel minder om te tekenen.
+#
+# Elk sjabloon: (buur-richting om te checken, de normaal, en 6 punten waarbij
+# elk punt is: (plek-in-de-kubus, textuur-plek uv)). De getallen komen precies
+# uit Ursina's eigen 'cube'-model, zodat onze blokken er hetzelfde uitzien.
+VLAK_SJABLONEN = [
+    # onderkant (-Y)
+    ((0, -1, 0), (0.0, -1.0, 0.0), [
+        ((0.5, -0.5, -0.5), (1.0, 0.0)), ((-0.5, -0.5, 0.5), (0.0, 1.0)),
+        ((0.5, -0.5, 0.5), (1.0, 1.0)),  ((0.5, -0.5, -0.5), (1.0, 0.0)),
+        ((-0.5, -0.5, -0.5), (0.0, 0.0)), ((-0.5, -0.5, 0.5), (0.0, 1.0))]),
+    # bovenkant (+Y)
+    ((0, 1, 0), (0.0, 1.0, 0.0), [
+        ((-0.5, 0.5, 0.5), (0.0, 1.0)), ((0.5, 0.5, -0.5), (1.0, 0.0)),
+        ((0.5, 0.5, 0.5), (1.0, 1.0)),  ((-0.5, 0.5, 0.5), (0.0, 1.0)),
+        ((-0.5, 0.5, -0.5), (0.0, 0.0)), ((0.5, 0.5, -0.5), (1.0, 0.0))]),
+    # rechts (+X)
+    ((1, 0, 0), (1.0, 0.0, 0.0), [
+        ((0.5, 0.5, 0.5), (1.0, 1.0)), ((0.5, -0.5, -0.5), (0.0, 0.0)),
+        ((0.5, -0.5, 0.5), (1.0, 0.0)), ((0.5, 0.5, 0.5), (1.0, 1.0)),
+        ((0.5, 0.5, -0.5), (0.0, 1.0)), ((0.5, -0.5, -0.5), (0.0, 0.0))]),
+    # achter (-Z)
+    ((0, 0, -1), (0.0, 0.0, -1.0), [
+        ((0.5, 0.5, -0.5), (1.0, 1.0)), ((-0.5, -0.5, -0.5), (0.0, 0.0)),
+        ((0.5, -0.5, -0.5), (1.0, 0.0)), ((0.5, 0.5, -0.5), (1.0, 1.0)),
+        ((-0.5, 0.5, -0.5), (0.0, 1.0)), ((-0.5, -0.5, -0.5), (0.0, 0.0))]),
+    # links (-X)
+    ((-1, 0, 0), (-1.0, 0.0, 0.0), [
+        ((-0.5, -0.5, -0.5), (0.0, 0.0)), ((-0.5, 0.5, 0.5), (1.0, 1.0)),
+        ((-0.5, -0.5, 0.5), (1.0, 0.0)), ((-0.5, -0.5, -0.5), (0.0, 0.0)),
+        ((-0.5, 0.5, -0.5), (0.0, 1.0)), ((-0.5, 0.5, 0.5), (1.0, 1.0))]),
+    # voor (+Z)
+    ((0, 0, 1), (0.0, 0.0, 1.0), [
+        ((0.5, -0.5, 0.5), (1.0, 0.0)), ((-0.5, 0.5, 0.5), (0.0, 1.0)),
+        ((0.5, 0.5, 0.5), (1.0, 1.0)), ((0.5, -0.5, 0.5), (1.0, 0.0)),
+        ((-0.5, -0.5, 0.5), (0.0, 0.0)), ((-0.5, 0.5, 0.5), (0.0, 1.0))]),
+]
+
+
+def _vlak_tekenen(t, buur_type):
+    """Moet de kant tussen dit blok (type t) en zijn buur getekend worden?
+    Ja als de buur LEEG is (lucht). Als de buur een dicht blok is, zie je de
+    kant toch niet, dus dan niet. Bij glas/water tekenen we alleen als de buur
+    een ANDER soort is (zo tekenen we niet tussen twee glasblokken in)."""
+    if buur_type is None:
+        return True                     # lucht ernaast: altijd tekenen
+    if buur_type not in LICHT_DOORLATEND:
+        return False                    # dicht blok ernaast: kant niet zichtbaar
+    return buur_type != t               # glas/water: niet tussen twee dezelfde
+
+
 def blok_zichtbaar(x, y, z):
     """Een blok hoef je alleen te tekenen als minstens één buur leeg is.
     Blokken die helemaal binnenin de berg zitten, zie je toch niet."""
@@ -1096,26 +1155,37 @@ def bouw_chunk_model(cx, cz):
         tex = BLOK_TEXTUUR.get(t)
         basiskleur = color.white if tex else KLEUREN.get(t, color.white)
 
-        ouder = Entity()
-        # Maak tijdelijk voor elk blok een kubus. De KLEUR van het blokje =
-        # basiskleur x bloklicht. Bij het samenplakken wordt die kleur ingebakken
-        # als vertex-kleur; de vlak-shading doet de shader zelf via de normaal.
+        # We bouwen ZELF het model op: vier lijsten met punten, textuur-plekken,
+        # normalen en kleuren. Per blok voegen we alleen de ZICHTBARE kanten toe.
+        verts, uvs, normalen, kleuren = [], [], [], []
         for pos in posities:
+            px, py, pz = pos
+            # De kleur (met ingebakken bloklicht) is voor alle punten van dit blok gelijk.
             factor = licht_factor(licht.get(pos, 0))
-            Entity(parent=ouder, model='cube', position=pos,
-                   color=color.rgba(basiskleur.r * factor,
-                                    basiskleur.g * factor,
-                                    basiskleur.b * factor,
-                                    basiskleur.a))
-        # ...en plak ze daarna samen tot één model (losse kubussen ruimt hij op).
-        # include_normals=True is nodig zodat de shader de vlak-richting kent!
-        ouder.combine(auto_destroy=True, include_normals=True)
-        ouder.shader  = blok_shader        # doet vlak-shading + leest bloklicht uit
-        ouder.texture = blok_texture(tex) if tex else 'white_cube'
-        ouder.color   = color.white        # niet nog eens tinten (kleur zit al in mesh)
+            kleur = color.rgba(basiskleur.r * factor, basiskleur.g * factor,
+                               basiskleur.b * factor, basiskleur.a)
+            for (bx, by, bz), normaal, punten in VLAK_SJABLONEN:
+                buur = wereld.get((px + bx, py + by, pz + bz))
+                if not _vlak_tekenen(t, buur):
+                    continue             # deze kant zie je toch niet: overslaan
+                for (ox, oy, oz), uv in punten:
+                    verts.append((px + ox, py + oy, pz + oz))
+                    uvs.append(uv)
+                    normalen.append(normaal)
+                    kleuren.append(kleur)
+
+        if not verts:
+            continue                     # niks zichtbaars van dit type in dit stukje
+
+        # Alles in één keer tot één model maken (geen trage combine() meer!).
+        model = Entity(
+            model=Mesh(vertices=verts, uvs=uvs, normals=normalen,
+                       colors=kleuren, mode='triangle', static=True),
+            shader=blok_shader)          # vlak-shading + bloklicht via de shader
+        model.texture = blok_texture(tex) if tex else 'white_cube'
         if t != 'water':
-            ouder.collider = 'mesh'   # zodat je het kunt aanklikken en erop staan
-        modellen.append(ouder)
+            model.collider = 'mesh'      # zodat je het kunt aanklikken en erop staan
+        modellen.append(model)
 
     chunk_modellen[(cx, cz)] = modellen
 
@@ -4171,7 +4241,4 @@ def input(toets):
             toon_melding("De profiler is al bezig...")
 
 
-if os.environ.get('MC_PROFTEST'):
-    with open('run_marker.txt', 'w', encoding='utf-8') as _rf:
-        _rf.write(f"voor app.run at perf={time.perf_counter():.2f}\n")
 app.run()
