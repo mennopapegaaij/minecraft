@@ -2807,6 +2807,10 @@ def leg_sneeuw_neer():
 
 window.fps_counter.enabled = True
 
+# Staat de hele interface (alle tekst, de rugzak, de balk, hartjes...) aan?
+# Met toets H zet je hem aan/uit. We beginnen UIT: lekker schoon scherm.
+interface_aan = False
+
 # Een regel met alle dorpjes en waar ze staan (2 per regel, anders wordt het te lang)
 _dorp_regels = []
 for _i in range(0, len(DORPEN), 2):
@@ -2816,7 +2820,7 @@ for _i in range(0, len(DORPEN), 2):
 DORP_UITLEG = "Dorpjes: " + "\n         ".join(_dorp_regels)
 
 # --- Uitleg op het scherm ---
-Text(
+uitleg_tekst = Text(
     text="Linker muis INGEDRUKT houden = hakken (barsten!)   Rechter muis = plaatsen   Muiswiel = ander blok\n"
          "Pas op: 's NACHTS komen er monsters! Skeletten schieten pijlen, creepers ONTPLOFFEN (ren weg!).\n"
          "Er zijn grote DORPEN met villagers, schuurtjes en akkers: klik op een villager om te RUILEN.\n"
@@ -2847,6 +2851,8 @@ pikhouweel_hud = Text(text="", position=(0.40, -0.42), scale=1.0,
 
 def werk_pikhouweel_hud():
     """Laat rechtsonder zien welke pikhouweel je nu hebt."""
+    if not interface_aan:
+        return                 # de interface staat uit (schoon scherm)
     if pikhouweel_niveau == 0:
         pikhouweel_hud.enabled = False
     else:
@@ -2865,6 +2871,8 @@ def verberg_melding():
 
 def toon_melding(tekst):
     """Laat 1,5 seconde een melding in beeld zien."""
+    if not interface_aan:
+        return                 # de interface staat uit: geen meldingen tonen
     melding.text = tekst
     melding.enabled = True
     invoke(verberg_melding, delay=1.5)
@@ -2931,6 +2939,7 @@ hotbar_start  = 0             # welk item staat links in de balk (voor scrollen)
 hotbar_bg     = []            # de donkere vakjes
 hotbar_icon   = []            # het plaatje van het blok
 hotbar_getal  = []            # hoeveel je ervan hebt
+hotbar_nummers = []           # de gele cijfertjes (welke toets)
 for _i in range(HOTBAR_SLOTS):
     _x = (_i - (HOTBAR_SLOTS - 1) / 2) * _HB_STAP
     hotbar_bg.append(Entity(parent=camera.ui, model='quad', z=1,
@@ -2939,8 +2948,9 @@ for _i in range(HOTBAR_SLOTS):
                               color=color.white, scale=0.072, position=(_x, _HB_Y)))
     hotbar_getal.append(Text(parent=camera.ui, text="", scale=0.7,
                              position=(_x + 0.035, _HB_Y - 0.028), origin=(0.5, 0)))
-    Text(parent=camera.ui, text=str((_i + 1) % 10), scale=0.6, color=color.yellow,
-         position=(_x - 0.038, _HB_Y + 0.032))          # het cijfer van de toets
+    hotbar_nummers.append(Text(parent=camera.ui, text=str((_i + 1) % 10), scale=0.6,
+                               color=color.yellow,
+                               position=(_x - 0.038, _HB_Y + 0.032)))   # het cijfer van de toets
 # Wit kadertje rond het gekozen vakje.
 hotbar_kader = Entity(parent=camera.ui, model='quad', z=1.5,
                       color=color.white, scale=0.098, position=(0, _HB_Y), enabled=False)
@@ -2949,6 +2959,8 @@ hotbar_kader = Entity(parent=camera.ui, model='quad', z=1.5,
 def werk_hotbar_bij():
     """Vult de balk onderin met je blokken en zet het kadertje bij het gekozen blok."""
     global hotbar_start
+    if not interface_aan:
+        return                 # de interface staat uit (schoon scherm)
     spullen = beschikbaar()
 
     # Zorg dat het vastgehouden blok in de balk zichtbaar blijft (venster van 9).
@@ -3079,6 +3091,61 @@ def werk_appel_hud():
         if aantal > 0:
             delen.append(tekst.format(aantal))
     appel_hud.text = "     ".join(delen)
+
+
+# --- De HELE interface aan/uit (toets H) ---
+def _zet_venster_extras(aan):
+    """Ursina's eigen hoekjes-tekst aan/uit. De FPS-teller en de X-knop gaan
+    mee met de interface. Het tandwiel-menu en de 'entities'/'colliders'-tellers
+    zijn alleen voor programmeurs, die laten we ALTIJD uit."""
+    for naam in ('fps_counter', 'exit_button'):
+        w = getattr(window, naam, None)
+        if w is not None:
+            w.enabled = aan
+    for naam in ('cog_menu', 'entity_counter', 'collider_counter'):
+        w = getattr(window, naam, None)
+        if w is not None:
+            w.enabled = False
+
+
+def _hud_elementen():
+    """Alle vaste dingen van de interface bij elkaar (tekst, rugzak, balk,
+    hartjes, honger-blokjes...)."""
+    els = [uitleg_tekst, creatief_banner, rugzak_hud, pikhouweel_hud,
+           melding, appel_hud, hotbar_kader]
+    els += hotbar_bg + hotbar_icon + hotbar_getal + hotbar_nummers
+    els += hartjes + honger_iconen
+    return els
+
+
+def zet_interface(aan):
+    """Zet de HELE interface aan of uit. Uit = een lekker schoon scherm zonder
+    letters of balken. Met toets H schakel je hem om, dus je bent niks kwijt."""
+    global interface_aan
+    interface_aan = aan
+    _zet_venster_extras(aan)          # ook Ursina's eigen hoekjes-tekst mee
+    if not aan:
+        # Alles verbergen.
+        for e in _hud_elementen():
+            e.enabled = False
+    else:
+        # De vaste dingen aanzetten...
+        uitleg_tekst.enabled    = True
+        rugzak_hud.enabled      = True
+        appel_hud.enabled       = True
+        creatief_banner.enabled = CREATIEF          # alleen in de creatieve modus
+        for e in hotbar_bg + hotbar_getal + hotbar_nummers + hartjes + honger_iconen:
+            e.enabled = True
+        # ...en de slimme dingen laten de HUD-functies zelf goed zetten.
+        werk_hud_bij()          # rugzak-tekst + de balk (plaatjes en kadertje)
+        werk_pikhouweel_hud()   # pikhouweel-melding (alleen als je er een hebt)
+        werk_appel_hud()        # appel/golem/boot-teller
+        werk_honger_bij()       # honger-blokjes kleuren
+        werk_hartjes_bij()      # hartjes kleuren
+
+
+# We beginnen met een schoon scherm: alle interface uit.
+zet_interface(False)
 
 
 def _sneeuwbal_poef(pos):
@@ -4223,6 +4290,10 @@ def input(toets):
         keuze = hotbar_start + nummer                    # het zichtbare vakje in de balk
         if keuze < len(spullen):
             kies_vast(spullen[keuze])
+
+    # H: de hele interface (alle tekst + de balk) aan/uit voor een schoon scherm.
+    if toets == 'h':
+        zet_interface(not interface_aan)
 
     if toets == 'f3':
         debug_tekst.enabled        = not debug_tekst.enabled
