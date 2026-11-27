@@ -1532,6 +1532,7 @@ def voltooi_breken(pos):
         rugzak['sneeuwbal'] = rugzak.get('sneeuwbal', 0) + 1
         werk_appel_hud()
     geluid_afbreken.play()
+    maak_brokjes(pos, t)       # brokjes in de kleur van het blok vliegen rond
     herbouw_rond(pos)
     if was_redstone:
         werk_redstone_bij()
@@ -1539,6 +1540,7 @@ def voltooi_breken(pos):
 
 def plaats_blok():
     """Plaatst het blok/ding dat je vasthoudt. Dit kost 1 uit je rugzak!"""
+    zwaai_hand()
     if mouse.world_point is None or mouse.world_normal is None:
         return
     naam = vastgehouden
@@ -3901,6 +3903,127 @@ if OPGESLAGEN:
     werk_redstone_bij()                      # redstone opnieuw uitrekenen na laden
 
 
+# ============================================================================
+#  ECHT IN DE WERELD (idee van Menno): je arm in beeld, brokjes bij het hakken,
+#  en een zon, maan en wolken in de lucht.
+# ============================================================================
+
+# --- Je arm (of het blok dat je vasthoudt), rechtsonder in beeld ---
+hand = Entity(parent=camera, position=(0.62, -0.52, 1.0), rotation=(-8, -18, 0))
+hand_model = None             # de arm of het blokje dat we nu laten zien
+hand_wat = 'leeg'             # wat houden we nu vast? (zo zien we wanneer het verandert)
+hand_zwaai_tijd = 0.0         # hoe lang de hand nog zwaait (na het neerzetten van iets)
+hand_klok = 0.0
+
+
+def zwaai_hand():
+    """Laat je hand 1 keer zwaaien (bijvoorbeeld als je iets neerzet)."""
+    global hand_zwaai_tijd
+    hand_zwaai_tijd = 0.25
+
+
+def werk_hand_bij():
+    """Elke frame: laat de goede arm of het goede blok zien, en laat hem zwaaien."""
+    global hand_model, hand_wat, hand_zwaai_tijd, hand_klok
+    wat = vastgehouden if vastgehouden in BLOK_TEXTUUR else None
+    if wat != hand_wat:
+        # we houden iets anders vast: een nieuw model maken
+        hand_wat = wat
+        if hand_model:
+            destroy(hand_model)
+        if wat is None:
+            # een arm: een huidkleurig blokje, schuin naar voren
+            hand_model = Entity(parent=hand, model='cube', scale=(0.2, 0.2, 0.75), position=(0, 0, 0.1),
+                                color=color.rgb(0.87, 0.67, 0.52), always_on_top=True)
+        else:
+            textuur = blok_texture(BLOK_TEXTUUR[wat])
+            hand_model = Entity(parent=hand, model='cube', scale=0.25, rotation=(0, 45, 0), position=(0.05, -0.03, 0),
+                                texture=textuur, color=color.white if textuur else KLEUREN.get(wat, color.gray),
+                                always_on_top=True)
+    hand_klok += time.dt
+    # zwaaien: als je aan het hakken bent (steeds), of net iets hebt neergezet (1 keer)
+    if hak_pos is not None:
+        zwaai = abs(math.sin(hand_klok * 14))
+    elif hand_zwaai_tijd > 0:
+        hand_zwaai_tijd -= time.dt
+        zwaai = math.sin((0.25 - hand_zwaai_tijd) / 0.25 * math.pi)
+    else:
+        zwaai = 0
+    # een klein beetje mee-wiebelen als je loopt
+    loopt = held_keys['w'] or held_keys['a'] or held_keys['s'] or held_keys['d']
+    wiebel = math.sin(hand_klok * 9) * 0.02 if loopt else 0
+    hand.rotation_x = -8 - 55 * zwaai
+    hand.y = -0.52 + wiebel - 0.08 * zwaai
+    hand.x = 0.62 + abs(wiebel) * 0.5
+
+
+# --- Brokjes die rondvliegen als je een blok kapot hakt ---
+brokjes = []
+
+
+def maak_brokjes(pos, bloktype):
+    """Een handvol kleine brokjes in de kleur van het blok, die alle kanten op vliegen en vallen."""
+    kleur = KLEUREN.get(bloktype, color.rgb(0.5, 0.5, 0.5))
+    midden = Vec3(*pos)
+    for _ in range(10):
+        brok = Entity(model='cube', color=kleur.tint(random.uniform(-0.15, 0.1)), scale=random.uniform(0.08, 0.16),
+                      position=midden + Vec3(random.uniform(-0.3, 0.3), random.uniform(-0.3, 0.3), random.uniform(-0.3, 0.3)))
+        brok.snelheid = Vec3(random.uniform(-2.5, 2.5), random.uniform(2, 5), random.uniform(-2.5, 2.5))
+        brok.leeftijd = 0.0
+        brokjes.append(brok)
+
+
+def werk_brokjes_bij():
+    """Elke frame: de brokjes vallen (zwaartekracht) en verdwijnen na een tijdje."""
+    for brok in list(brokjes):
+        brok.leeftijd += time.dt
+        brok.snelheid.y -= 14 * time.dt
+        brok.position += brok.snelheid * time.dt
+        brok.rotation_y += 300 * time.dt
+        if brok.leeftijd > 0.9:
+            brokjes.remove(brok)
+            destroy(brok)
+        elif brok.leeftijd > 0.6:
+            brok.scale *= 0.9                  # aan het eind krimpen ze weg
+
+
+# --- Zon, maan en wolken ---
+ZON_AFSTAND = 160
+zon = Entity(model='quad', billboard=True, scale=22, color=color.rgb(1.0, 0.92, 0.45), unlit=True)
+zon_gloed = Entity(model='quad', billboard=True, scale=34, color=color.rgba(1.0, 0.85, 0.4, 0.25), unlit=True)
+maan = Entity(model='quad', billboard=True, scale=14, color=color.rgb(0.92, 0.93, 1.0), unlit=True)
+maan_vlek = Entity(parent=maan, model='quad', scale=0.3, position=(0.15, 0.1, -0.01), color=color.rgb(0.78, 0.8, 0.88))
+WOLK_HOOGTE = 58
+wolken = []
+_wolk_rng = random.Random(7)
+for _i in range(28):
+    _wolk = Entity(model='cube', color=color.rgb(1, 1, 1),
+                   scale=(_wolk_rng.uniform(8, 18), 1.2, _wolk_rng.uniform(5, 11)))
+    _wolk.dx = _wolk_rng.uniform(-90, 90)      # waar de wolk staat, ten opzichte van de speler
+    _wolk.dz = _wolk_rng.uniform(-90, 90)
+    wolken.append(_wolk)
+
+
+def werk_lucht_bij(fractie, helder):
+    """Elke frame: de zon en maan gaan langs de lucht, en de wolken drijven langzaam voorbij."""
+    hoek = fractie * 2 * math.pi
+    om = speler.world_position
+    # de zon draait in een grote cirkel om je heen (op = oost, onder = west)
+    zon.position = om + Vec3(math.cos(hoek) * ZON_AFSTAND, math.sin(hoek) * ZON_AFSTAND, 40)
+    zon_gloed.position = zon.position + Vec3(0, 0, 1)
+    maan.position = om + Vec3(-math.cos(hoek) * ZON_AFSTAND, -math.sin(hoek) * ZON_AFSTAND, 40)
+    zon.enabled = zon_gloed.enabled = zon.y > om.y - 20
+    maan.enabled = maan.y > om.y - 20
+    # wolken: langzaam naar het oosten, en ze blijven rond de speler (wat te ver weg is, komt aan de andere kant terug)
+    licht = max(0.35, helder)
+    for wolk in wolken:
+        wolk.dx += 1.5 * time.dt
+        if wolk.dx > 95:
+            wolk.dx -= 190
+        wolk.position = Vec3(om.x + wolk.dx, WOLK_HOOGTE, om.z + wolk.dz)
+        wolk.color = color.rgb(licht, licht, licht * 1.02)
+
+
 def update():
     """Wordt elke frame aangeroepen: dag/nacht, bouwen en stukjes beheren."""
     global vorige_chunk, gemiddelde_fps, debug_timer, dag_tijd, monster_timer
@@ -4101,6 +4224,9 @@ def update():
         for model in modellen:
             model.set_shader_input('daglicht', daglicht)
     metingen['daglicht'] += time.perf_counter() - _t_daglicht
+    werk_lucht_bij(fractie, helder)       # zon, maan en wolken
+    werk_hand_bij()                       # je arm in beeld
+    werk_brokjes_bij()                    # de brokjes van gehakte blokken
 
     # Is het nacht? (de zon staat onder de horizon). Wordt het net dag?
     # Dan verbranden alle monsters in de zon en is het weer veilig!
