@@ -3905,7 +3905,7 @@ if OPGESLAGEN:
 
 # ============================================================================
 #  ECHT IN DE WERELD (idee van Menno): je arm in beeld, brokjes bij het hakken,
-#  en een zon, maan en wolken in de lucht.
+#  en een maan en wolken in de lucht.
 # ============================================================================
 
 # --- Je arm (of het blok dat je vasthoudt), rechtsonder in beeld ---
@@ -3987,10 +3987,9 @@ def werk_brokjes_bij():
             brok.scale *= 0.9                  # aan het eind krimpen ze weg
 
 
-# --- Zon, maan en wolken ---
+# --- Maan en wolken ---
 ZON_AFSTAND = 160
-zon = Entity(model='quad', billboard=True, scale=22, color=color.rgb(1.0, 0.92, 0.45), unlit=True)
-zon_gloed = Entity(model='quad', billboard=True, scale=34, color=color.rgba(1.0, 0.85, 0.4, 0.25), unlit=True)
+# (de zon is weggehaald: Menno wilde hem niet. De maan is er nog wel.)
 maan = Entity(model='quad', billboard=True, scale=14, color=color.rgb(0.92, 0.93, 1.0), unlit=True)
 maan_vlek = Entity(parent=maan, model='quad', scale=0.3, position=(0.15, 0.1, -0.01), color=color.rgb(0.78, 0.8, 0.88))
 WOLK_HOOGTE = 58
@@ -4005,14 +4004,11 @@ for _i in range(28):
 
 
 def werk_lucht_bij(fractie, helder):
-    """Elke frame: de zon en maan gaan langs de lucht, en de wolken drijven langzaam voorbij."""
+    """Elke frame: de maan gaat langs de lucht, en de wolken drijven langzaam voorbij."""
     hoek = fractie * 2 * math.pi
     om = speler.world_position
-    # de zon draait in een grote cirkel om je heen (op = oost, onder = west)
-    zon.position = om + Vec3(math.cos(hoek) * ZON_AFSTAND, math.sin(hoek) * ZON_AFSTAND, 40)
-    zon_gloed.position = zon.position + Vec3(0, 0, 1)
+    # de maan draait in een grote cirkel om je heen (hij komt op als het nacht wordt)
     maan.position = om + Vec3(-math.cos(hoek) * ZON_AFSTAND, -math.sin(hoek) * ZON_AFSTAND, 40)
-    zon.enabled = zon_gloed.enabled = zon.y > om.y - 20
     maan.enabled = maan.y > om.y - 20
     # wolken: langzaam naar het oosten, en ze blijven rond de speler (wat te ver weg is, komt aan de andere kant terug)
     licht = max(0.35, helder)
@@ -4224,7 +4220,7 @@ def update():
         for model in modellen:
             model.set_shader_input('daglicht', daglicht)
     metingen['daglicht'] += time.perf_counter() - _t_daglicht
-    werk_lucht_bij(fractie, helder)       # zon, maan en wolken
+    werk_lucht_bij(fractie, helder)       # maan en wolken
     werk_hand_bij()                       # je arm in beeld
     werk_brokjes_bij()                    # de brokjes van gehakte blokken
 
