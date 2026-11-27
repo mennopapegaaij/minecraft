@@ -1220,7 +1220,7 @@ ITEM_NAMEN = {
     'hek': 'Hek', 'deur': 'Deur',
     'hefboom': 'Hefboom (schakelaar)',
     'piston': 'Piston', 'kleverige_piston': 'Kleverige piston',
-    'ijzergolem': 'IJzergolem', 'boot': 'Boot',
+    'ijzergolem': 'IJzergolem', 'boot': 'Boot', 'graafmachine': 'Graafmachine',
     'stenen_pikhouweel': 'Stenen pikhouweel',
     'ijzeren_pikhouweel': 'IJzeren pikhouweel',
     'gouden_pikhouweel': 'Gouden pikhouweel',
@@ -1246,6 +1246,8 @@ RECEPTEN = {
     'ijzergolem': {'kosten': {'ijzer': 4, 'pompoen': 1}, 'maakt': 1, 'plaatsbaar': False},
     # Een bootje om snel over het water te varen. Zet hem neer met de N-toets.
     'boot':       {'kosten': {'hout': 5},                'maakt': 1, 'plaatsbaar': False},
+    # Een GRAAFMACHINE (idee van Menno): zet hem neer met K en hij graaft vanzelf een grote tunnel.
+    'graafmachine': {'kosten': {'ijzer': 3, 'hout': 2},  'maakt': 1, 'plaatsbaar': False},
     # De pikhouweel-ketting: elke pikhouweel kan een mooier erts hakken.
     # 'niveau' = hoe sterk hij is (zie ERTS_NIVEAU hierboven).
     'stenen_pikhouweel':    {'kosten': {'steen': 3,   'hout': 2}, 'maakt': 1, 'plaatsbaar': False, 'niveau': 1},
@@ -2827,7 +2829,7 @@ uitleg_tekst = Text(
          "Pas op: 's NACHTS komen er monsters! Skeletten schieten pijlen, creepers ONTPLOFFEN (ren weg!).\n"
          "Er zijn grote DORPEN met villagers, schuurtjes en akkers: klik op een villager om te RUILEN.\n"
          "C = maak-tafel (maak er eerst een en ga ernaast staan!)   F = deur / hefboom aan-uit\n"
-         "G = ijzergolem neerzetten (4 ijzer + 1 pompoen)   N = boot te water / in- en uitstappen\n"
+         "G = ijzergolem neerzetten (4 ijzer + 1 pompoen)   N = boot te water / in- en uitstappen   K = graafmachine\n"
          "WASD = lopen   1-9/muiswiel = kies blok   Pijltjes = blok verschuiven   Dubbel-spatie = vliegen (creatief)\n"
          "O = opslaan   M = werelden (andere/nieuwe wereld)   Escape = opslaan & stoppen\n"
          + DORP_UITLEG + "   (druk F3 om te zien waar jij bent)",
@@ -3088,7 +3090,8 @@ def werk_appel_hud():
     for naam, tekst in (('appel',      "Appels: {} (E = eten)"),
                         ('sneeuwbal',  "Sneeuwballen: {} (B = gooien)"),
                         ('ijzergolem', "Golems: {} (G = neerzetten)"),
-                        ('boot',       "Boten: {} (N = te water)")):
+                        ('boot',       "Boten: {} (N = te water)"),
+                        ('graafmachine', "Graafmachines: {} (K = neerzetten)")):
         aantal = rugzak.get(naam, 0)
         if aantal > 0:
             delen.append(tekst.format(aantal))
@@ -3299,6 +3302,128 @@ def boot_toets():
     maak_boot(Vec3(plek.x, WATER_NIVEAU + 0.6, plek.z))
     geluid_plaatsen.play()
     toon_melding("Boot te water! Druk op N om in te stappen. ⛵")
+
+
+# ============================================================================
+#  DE GRAAFMACHINE (idee van Menno) ⛏️
+# ============================================================================
+# Maak er een bij de maak-tafel (3 ijzer + 2 hout). Druk op K: dan zet je hem
+# neer, en hij graaft VANZELF een tunnel van 3 bij 3 blokken, recht vooruit
+# (de kant op waar jij kijkt), 30 blokken lang. Alles wat hij uitgraaft gaat in
+# je rugzak. Komt hij water tegen, of is hij klaar? Dan komt hij terug in je rugzak.
+GRAAF_LENGTE = 30            # zo ver graaft hij
+GRAAF_TEMPO  = 0.45          # zoveel seconden per stapje
+graafmachines = []           # de machines die nu aan het graven zijn
+
+
+def maak_graafmachine(blok, richting):
+    """Bouwt het model: een gele machine met een cabine en een draaiende boor voorop."""
+    dx, dz = richting
+    m = Entity(position=Vec3(blok[0], blok[1] - 0.5, blok[2]), rotation_y=math.degrees(math.atan2(dx, dz)))
+    geel = color.rgb(0.95, 0.75, 0.1)
+    Entity(parent=m, model='cube', color=geel, scale=(1.6, 1.0, 1.8), y=0.6)                    # de romp
+    Entity(parent=m, model='cube', color=color.rgb(0.25, 0.25, 0.3), scale=(1.0, 0.7, 0.9),
+           position=(0, 1.45, -0.3))                                                           # de cabine
+    Entity(parent=m, model='cube', color=color.rgb(0.6, 0.8, 0.95), scale=(0.8, 0.45, 0.05),
+           position=(0, 1.5, 0.16))                                                            # het raampje
+    for x in (-0.85, 0.85):
+        Entity(parent=m, model='cube', color=color.rgb(0.15, 0.15, 0.15), scale=(0.3, 0.5, 1.9), position=(x, 0.25, 0))  # rupsbanden
+    m.boor = Entity(parent=m, position=(0, 0.9, 1.0))
+    Entity(parent=m.boor, model=Cone(8, radius=0.7, height=1.2), rotation_x=90, color=color.rgb(0.55, 0.55, 0.6))
+    m.lampje = Entity(parent=m, model='sphere', scale=0.25, position=(0, 1.9, -0.3), color=color.rgb(1, 0.5, 0))
+    m.richting = richting
+    m.blok = blok            # in welk blok-vakje de machine nu staat (de onderste laag)
+    m.klok = 0.0
+    m.gegraven = 0
+    graafmachines.append(m)
+    return m
+
+
+def graafmachine_toets():
+    """K: zet een graafmachine neer, recht voor je, en hij begint meteen te graven."""
+    if not CREATIEF and rugzak.get('graafmachine', 0) <= 0:
+        toon_melding("Je hebt geen graafmachine. Maak er een bij de maak-tafel (3 ijzer + 2 hout)!")
+        return
+    # welke kant kijk je op? (we kiezen de dichtstbijzijnde van de 4 windrichtingen)
+    v = speler.forward
+    richting = (1 if v.x > 0 else -1, 0) if abs(v.x) > abs(v.z) else (0, 1 if v.z > 0 else -1)
+    voeten = (round(speler.x), round(speler.y + 0.01), round(speler.z))
+    blok = (voeten[0] + richting[0] * 2, voeten[1], voeten[2] + richting[1] * 2)
+    if not CREATIEF:
+        rugzak['graafmachine'] -= 1
+        werk_appel_hud()
+    maak_graafmachine(blok, richting)
+    geluid_plaatsen.play()
+    toon_melding("De graafmachine gaat graven! Hij maakt een tunnel van 30 blokken. ⛏️")
+
+
+def machine_sloopt(pos):
+    """De machine haalt 1 blok weg (ook als het nog verstopt onder de grond zit) en stopt het in je rugzak."""
+    if pos in wereld:
+        t = wereld.pop(pos)
+        cx, cz = chunk_van_pos(pos[0], pos[2])
+        chunk_blokken.get((cx, cz), {}).pop(pos, None)
+    elif pos not in weggehaald and is_gevuld_wiskundig(*pos):
+        t = bepaal_blok_type(pos[0], pos[1], pos[2], hoogte_op(pos[0], pos[2]))
+    else:
+        return None
+    markeer_weg(pos)
+    if t in DRAAD_TYPES or t in LAMP_TYPES or t == 'redstone_blok':
+        registreer_redstone_blok(pos, t, False)
+    if t != 'water':
+        gekregen = REDSTONE_BASIS.get(t, t)
+        rugzak[gekregen] = rugzak.get(gekregen, 0) + 1
+    return t
+
+
+def stop_graafmachine(m, tekst):
+    graafmachines.remove(m)
+    destroy(m)
+    rugzak['graafmachine'] = rugzak.get('graafmachine', 0) + 1     # hij komt terug in je rugzak
+    werk_appel_hud()
+    toon_melding(tekst)
+
+
+def werk_graafmachines_bij():
+    """Elke frame: de boor draait, en om de zoveel tijd graaft de machine een stukje verder."""
+    for m in list(graafmachines):
+        m.boor.rotation_z += 600 * time.dt
+        m.lampje.enabled = int(time.time() * 3) % 2 == 0           # het oranje lampje knippert
+        m.klok += time.dt
+        if m.klok < GRAAF_TEMPO:
+            continue
+        m.klok = 0.0
+        dx, dz = m.richting
+        zij_x, zij_z = dz, dx                                       # opzij (dwars op de richting)
+        bx, by, bz = m.blok
+        voor = [(bx + dx + s * zij_x, by + h, bz + dz + s * zij_z) for s in (-1, 0, 1) for h in (0, 1, 2)]
+        if any(wereld.get(p) == 'water' for p in voor):
+            stop_graafmachine(m, "Water! De graafmachine stopt en komt terug in je rugzak.")
+            continue
+        weg, soorten = [], []
+        for p in voor:
+            t = machine_sloopt(p)
+            if t:
+                weg.append(p)
+                soorten.append(t)
+        for p in weg:
+            onthul_buren(p)                                         # de tunnelwanden worden zichtbaar
+        if weg:
+            maak_brokjes(weg[len(weg) // 2], soorten[len(soorten) // 2])
+            geluid_afbreken.play()
+            werk_hud_bij()
+            klaar_chunks = set()
+            for p in weg:
+                c = chunk_van_pos(p[0], p[2])
+                if c not in klaar_chunks:
+                    klaar_chunks.add(c)
+                    herbouw_rond(p)                                 # 1 keer per stukje wereld opnieuw bouwen
+        # en dan een stapje vooruit
+        m.blok = (bx + dx, by, bz + dz)
+        m.animate_position(Vec3(m.blok[0], m.blok[1] - 0.5, m.blok[2]), duration=GRAAF_TEMPO * 0.8, curve=curve.linear)
+        m.gegraven += 1
+        if m.gegraven >= GRAAF_LENGTE:
+            stop_graafmachine(m, "De graafmachine is klaar: een tunnel van 30 blokken! Hij zit weer in je rugzak.")
 
 
 # --- Maak-tafel (open met 'c', sluit met Escape of de Sluiten-knop) ---
@@ -4192,6 +4317,7 @@ def update():
     metingen['daglicht'] += time.perf_counter() - _t_daglicht
     werk_hand_bij()                       # je arm in beeld
     werk_brokjes_bij()                    # de brokjes van gehakte blokken
+    werk_graafmachines_bij()              # de graafmachines graven verder
 
     # Is het nacht? (de zon staat onder de horizon). Wordt het net dag?
     # Dan verbranden alle monsters in de zon en is het weer veilig!
@@ -4350,6 +4476,9 @@ def input(toets):
     # 'n' = boot: neerzetten, instappen of uitstappen
     if toets == 'n':
         boot_toets()
+        return
+    if toets == 'k':
+        graafmachine_toets()        # K = een graafmachine neerzetten
         return
 
     # DUBBEL op spatie tikken = vliegen aan/uit (net als Minecraft, creatief).
