@@ -144,11 +144,11 @@ void main() {
     vec3 n = normalize(world_normal);
     float fb;
     if (abs(n.y) >= abs(n.x) && abs(n.y) >= abs(n.z))
-        fb = n.y > 0.0 ? 1.0 : 0.45;   // boven fel, onder donkerst
+        fb = n.y > 0.0 ? 1.0 : 0.65;   // boven fel, onder donkerst (minder donker, idee van Menno)
     else if (abs(n.z) >= abs(n.x))
-        fb = 0.80;                     // voor/achter
+        fb = 0.90;                     // voor/achter
     else
-        fb = 0.60;                     // links/rechts
+        fb = 0.78;                     // links/rechts
     vec4 c = texture(p3d_Texture0, uvs) * p3d_ColorScale * vertex_color;
     c.rgb *= fb * daglicht;            // vlak-shading en nacht-dimming
     fragColor = c;
@@ -157,7 +157,7 @@ void main() {
 default_input={'daglicht': 1.0},
 )
 
-MIN_LICHT = 0.10    # hoe donker de allerdonkerste plekken worden (niet pikzwart)
+MIN_LICHT = 0.35    # hoe donker de allerdonkerste plekken worden (was 0.10: Menno vond het te donker)
 MAX_LICHT = 15      # hoogste lichtniveau (net als Minecraft: 0 t/m 15)
 
 
@@ -2723,7 +2723,7 @@ lucht = Sky(color=color.rgb(0.5, 0.7, 1.0))
 
 # De verlichting van de blokken zit al ingebakken (zie blok_shader / LICHT_KUBUS).
 # Overdag staat de 'daglicht'-knop op 1, 's nachts dimmen we die naar MAANLICHT.
-MAANLICHT = 0.14          # hoeveel licht er 's nachts nog is (maanlicht, niet pikzwart)
+MAANLICHT = 0.40          # hoeveel licht er 's nachts nog is (was 0.14: Menno vond het te donker)
 
 dag_tijd   = 0.0
 DAG_LENGTE = 600.0        # een hele dag+nacht duurt 10 minuten: 5 min dag + 5 min nacht
@@ -4089,7 +4089,7 @@ def update():
     dag_tijd += time.dt
     fractie = (dag_tijd % DAG_LENGTE) / DAG_LENGTE
     hoogte = math.sin(fractie * 2 * math.pi)
-    helder = max(0.1, (hoogte + 1) / 2)
+    helder = min(1.0, max(0.25, 0.25 + 1.3 * (hoogte + 1) / 2))   # overdag (bijna) altijd vol licht, niet alleen om 12 uur
     lucht.color = color.rgb(0.5 * helder, 0.7 * helder, 1.0 * helder)
 
     # Ook de blokken mee laten dimmen: overdag vol daglicht, 's nachts alleen
