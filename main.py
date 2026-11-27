@@ -3905,7 +3905,7 @@ if OPGESLAGEN:
 
 # ============================================================================
 #  ECHT IN DE WERELD (idee van Menno): je arm in beeld, brokjes bij het hakken,
-#  en een maan en wolken in de lucht.
+#  (de zon, maan en wolken zijn er weer uit gehaald).
 # ============================================================================
 
 # --- Je arm (of het blok dat je vasthoudt), rechtsonder in beeld ---
@@ -3987,37 +3987,7 @@ def werk_brokjes_bij():
             brok.scale *= 0.9                  # aan het eind krimpen ze weg
 
 
-# --- Maan en wolken ---
-ZON_AFSTAND = 160
-# (de zon is weggehaald: Menno wilde hem niet. De maan is er nog wel.)
-maan = Entity(model='quad', billboard=True, scale=14, color=color.rgb(0.92, 0.93, 1.0), unlit=True)
-maan_vlek = Entity(parent=maan, model='quad', scale=0.3, position=(0.15, 0.1, -0.01), color=color.rgb(0.78, 0.8, 0.88))
-WOLK_HOOGTE = 58
-wolken = []
-_wolk_rng = random.Random(7)
-for _i in range(28):
-    _wolk = Entity(model='cube', color=color.rgb(1, 1, 1),
-                   scale=(_wolk_rng.uniform(8, 18), 1.2, _wolk_rng.uniform(5, 11)))
-    _wolk.dx = _wolk_rng.uniform(-90, 90)      # waar de wolk staat, ten opzichte van de speler
-    _wolk.dz = _wolk_rng.uniform(-90, 90)
-    wolken.append(_wolk)
-
-
-def werk_lucht_bij(fractie, helder):
-    """Elke frame: de maan gaat langs de lucht, en de wolken drijven langzaam voorbij."""
-    hoek = fractie * 2 * math.pi
-    om = speler.world_position
-    # de maan draait in een grote cirkel om je heen (hij komt op als het nacht wordt)
-    maan.position = om + Vec3(-math.cos(hoek) * ZON_AFSTAND, -math.sin(hoek) * ZON_AFSTAND, 40)
-    maan.enabled = maan.y > om.y - 20
-    # wolken: langzaam naar het oosten, en ze blijven rond de speler (wat te ver weg is, komt aan de andere kant terug)
-    licht = max(0.35, helder)
-    for wolk in wolken:
-        wolk.dx += 1.5 * time.dt
-        if wolk.dx > 95:
-            wolk.dx -= 190
-        wolk.position = Vec3(om.x + wolk.dx, WOLK_HOOGTE, om.z + wolk.dz)
-        wolk.color = color.rgb(licht, licht, licht * 1.02)
+# (de zon, de maan en de wolken zijn weggehaald: Menno wilde ze niet)
 
 
 def update():
@@ -4220,7 +4190,6 @@ def update():
         for model in modellen:
             model.set_shader_input('daglicht', daglicht)
     metingen['daglicht'] += time.perf_counter() - _t_daglicht
-    werk_lucht_bij(fractie, helder)       # maan en wolken
     werk_hand_bij()                       # je arm in beeld
     werk_brokjes_bij()                    # de brokjes van gehakte blokken
 
